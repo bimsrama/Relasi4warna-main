@@ -1,0 +1,176 @@
+{
+  "identity": {
+    "name": "Relasi4Warna",
+    "tone": "Pastoral, Warm, Trust-Building, Insightful",
+    "aesthetic": "Modern Pastoral / Warm SaaS",
+    "description": "A relationship assessment platform that blends psychological depth with the warmth of a fireside chat. It avoids clinical sterility in favor of organic textures, earthy tones, and human-centric typography."
+  },
+  "typography": {
+    "font_family": {
+      "heading": "Merriweather, serif",
+      "body": "Manrope, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "weights": {
+      "heading": "700",
+      "subheading": "400",
+      "body": "400",
+      "bold": "700"
+    },
+    "scale": {
+      "h1": "text-4xl md:text-5xl lg:text-6xl tracking-tight leading-tight",
+      "h2": "text-3xl md:text-4xl tracking-tight leading-snug",
+      "h3": "text-2xl md:text-3xl leading-snug",
+      "body_lg": "text-lg md:text-xl leading-relaxed",
+      "body": "text-base leading-relaxed",
+      "caption": "text-sm text-muted-foreground"
+    },
+    "imports": [
+      "https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,400&display=swap"
+    ]
+  },
+  "colors": {
+    "palette": {
+      "background": "#FDFCF8",
+      "foreground": "#2D2A26",
+      "card": "#FFFFFF",
+      "card_foreground": "#2D2A26",
+      "popover": "#FFFFFF",
+      "popover_foreground": "#2D2A26",
+      "primary": "#4A3B32",
+      "primary_foreground": "#FDFCF8",
+      "secondary": "#F2EFE9",
+      "secondary_foreground": "#4A3B32",
+      "muted": "#F2EFE9",
+      "muted_foreground": "#78716C",
+      "accent": "#F2EFE9",
+      "accent_foreground": "#4A3B32",
+      "destructive": "#C05640",
+      "destructive_foreground": "#FDFCF8",
+      "border": "#E6E2D8",
+      "input": "#E6E2D8",
+      "ring": "#4A3B32"
+    },
+    "archetypes": {
+      "driver": {
+        "name": "Crimson",
+        "hex": "#C05640",
+        "bg": "#FDF3F1",
+        "text": "#7A2E1F",
+        "description": "Terracotta/Rust - Earthy, strong, decisive."
+      },
+      "spark": {
+        "name": "Amber",
+        "hex": "#D99E30",
+        "bg": "#FFF9EB",
+        "text": "#855C14",
+        "description": "Warm Ochre/Gold - Energetic, bright, inviting."
+      },
+      "anchor": {
+        "name": "Jade",
+        "hex": "#5D8A66",
+        "bg": "#F1F7F3",
+        "text": "#2D4A34",
+        "description": "Sage/Moss - Calming, stable, natural."
+      },
+      "analyst": {
+        "name": "Azure",
+        "hex": "#5B8FA8",
+        "bg": "#F0F7FA",
+        "text": "#264E63",
+        "description": "Muted Slate Blue - Clear, logical, deep."
+      }
+    },
+    "gradients": {
+      "warm_glow": "bg-gradient-to-br from-[#FDFCF8] to-[#F2EFE9]",
+      "driver_glow": "bg-gradient-to-br from-[#FDF3F1] to-[#FDFCF8]",
+      "spark_glow": "bg-gradient-to-br from-[#FFF9EB] to-[#FDFCF8]",
+      "anchor_glow": "bg-gradient-to-br from-[#F1F7F3] to-[#FDFCF8]",
+      "analyst_glow": "bg-gradient-to-br from-[#F0F7FA] to-[#FDFCF8]"
+    }
+  },
+  "layout": {
+    "spacing": {
+      "container_padding": "px-4 md:px-8 lg:px-12",
+      "section_gap": "py-16 md:py-24 lg:py-32",
+      "element_gap": "gap-6 md:gap-8"
+    },
+    "border_radius": {
+      "default": "rounded-xl",
+      "card": "rounded-2xl",
+      "button": "rounded-full"
+    },
+    "grids": {
+      "bento_archetypes": "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6",
+      "quiz_options": "grid grid-cols-1 gap-4"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-primary text-primary-foreground hover:bg-primary/90 rounded-full px-8 py-6 text-lg font-medium transition-all shadow-sm hover:shadow-md",
+      "secondary": "bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-full px-8 py-6 text-lg font-medium transition-all",
+      "outline": "border-2 border-primary text-primary hover:bg-primary/5 rounded-full px-8 py-6 text-lg font-medium transition-all",
+      "ghost": "hover:bg-accent hover:text-accent-foreground rounded-full px-6 py-4 text-base font-medium transition-all"
+    },
+    "cards": {
+      "base": "bg-card text-card-foreground rounded-2xl border border-border shadow-sm hover:shadow-md transition-all duration-300",
+      "archetype": "relative overflow-hidden rounded-2xl border border-border/50 p-8 transition-all hover:-translate-y-1 hover:shadow-lg"
+    },
+    "inputs": {
+      "default": "h-12 rounded-lg border-input bg-transparent px-4 py-2 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+    }
+  },
+  "visual_enhancers": {
+    "texture": "bg-[url('https://www.transparenttextures.com/patterns/cream-paper.png')] bg-repeat opacity-50 fixed inset-0 pointer-events-none z-0 mix-blend-multiply",
+    "shadows": {
+      "soft": "shadow-[0_8px_30px_rgb(0,0,0,0.04)]",
+      "float": "shadow-[0_20px_50px_rgb(0,0,0,0.08)]"
+    },
+    "glass": "bg-white/70 backdrop-blur-md border border-white/20 shadow-sm"
+  },
+  "images": {
+    "family": {
+      "url": "https://images.unsplash.com/photo-1506836467174-27f1042aa48c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1ODB8MHwxfHNlYXJjaHwxfHxoYXBweSUyMGRpdmVyc2UlMjBmYW1pbHklMjBvdXRkb29ycyUyMG5hdHVyYWwlMjBsaWdodHxlbnwwfHx8fDE3NjczOTk5NTB8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Happy diverse family outdoors",
+      "category": "series_cover"
+    },
+    "business": {
+      "url": "https://images.unsplash.com/photo-1704652329540-851160c7741f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzd8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBkaXZlcnNlJTIwYnVzaW5lc3MlMjB0ZWFtJTIwbWVldGluZyUyMHdhcm0lMjBhdG1vc3BoZXJlfGVufDB8fHx8MTc2NzM5OTk1M3ww&ixlib=rb-4.1.0&q=85",
+      "alt": "Professional team meeting",
+      "category": "series_cover"
+    },
+    "couples": {
+      "url": "https://images.unsplash.com/photo-1587485762996-56c4ac180df9?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzh8MHwxfHNlYXJjaHwxfHxsb3ZpbmclMjBjb3VwbGUlMjB0YWxraW5nJTIwaG9sZGluZyUyMGhhbmRzJTIwc3Vuc2V0fGVufDB8fHx8MTc2NzM5OTk1NXww&ixlib=rb-4.1.0&q=85",
+      "alt": "Couple at sunset",
+      "category": "series_cover"
+    },
+    "friendship": {
+      "url": "https://images.unsplash.com/photo-1753351056838-143bc3e4cf03?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHxkaXZlcnNlJTIwZ3JvdXAlMjBvZiUyMGZyaWVuZHMlMjBsYXVnaGluZyUyMGNvZmZlZSUyMHNob3B8ZW58MHx8fHwxNzY3Mzk5OTU3fDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Friends laughing in cafe",
+      "category": "series_cover"
+    }
+  },
+  "accessibility": {
+    "contrast": "Ensure all text meets WCAG AA standards. Use dark charcoal (#2D2A26) for body text on light backgrounds.",
+    "focus": "Visible focus rings using the primary color (#4A3B32) with 2px offset.",
+    "motion": "Respect prefers-reduced-motion. Use simple fades and slides, avoid rapid flashing."
+  },
+  "instructions_to_main_agent": [
+    "Implement the 'Pastoral' theme by using the specified color palette and typography.",
+    "Use the 'Merriweather' font for all headings to give a warm, literary feel.",
+    "Use 'Manrope' for body text for modern readability.",
+    "Ensure the 4 Archetype colors (Crimson, Amber, Jade, Azure) are used consistently for their respective sections.",
+    "The default language is Indonesian. Ensure UI accommodates longer text strings.",
+    "Use the provided image URLs for the Series selection cards.",
+    "Apply the 'texture' visual enhancer (cream paper pattern) to the main background to avoid a sterile digital look.",
+    "Use 'sonner' for toast notifications.",
+    "Use 'lucide-react' for icons.",
+    "Ensure all interactive elements have 'data-testid' attributes."
+  ],
+  "universal_guidelines": [
+    "Do not use gradients for text.",
+    "Avoid pure black (#000000) and pure white (#FFFFFF) for large surfaces; use the off-white and charcoal tones defined.",
+    "Use generous padding (p-8, p-12) to create a relaxed, unhurried atmosphere.",
+    "Buttons should be pill-shaped (rounded-full) to feel friendly and organic."
+  ]
+}

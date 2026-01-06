@@ -1,0 +1,41 @@
+{
+  "short_name": "Relasi4Warna",
+  "name": "Relasi4Warna - Tes Komunikasi Hubungan",
+  "description": "Platform asesmen komunikasi hubungan dengan 4 arketipe komunikasi untuk memahami diri sendiri dan orang terdekat",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#4A3B32",
+  "background_color": "#FDFCF8",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "id",
+  "categories": ["lifestyle", "education", "health"],
+  "shortcuts": [
+    {
+      "name": "Mulai Tes Keluarga",
+      "short_name": "Tes Keluarga",
+      "url": "/quiz/family",
+      "icons": [{"src": "icon-192.png", "sizes": "192x192"}]
+    },
+    {
+      "name": "Mulai Tes Pasangan",
+      "short_name": "Tes Pasangan", 
+      "url": "/quiz/couples",
+      "icons": [{"src": "icon-192.png", "sizes": "192x192"}]
+    }
+  ]
+}
