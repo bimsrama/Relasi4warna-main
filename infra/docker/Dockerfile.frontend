@@ -1,36 +1,28 @@
-# Relasi4Warna Frontend Dockerfile (FIXED FOR NPM)
-FROM node:18-alpine as builder
+# Gunakan Python versi ringan
+FROM python:3.11-slim
 
+# Set folder kerja di dalam container
 WORKDIR /app
 
-# 1. FIX: Copy package*.json (Biar package-lock.json ikut, dan HAPUS yarn.lock)
-COPY frontend/package*.json ./
+# 1. Install Dependencies Umum
+# Copy file requirements.txt dari folder backend ke dalam container
+COPY backend/requirements.txt .
 
-# 2. FIX: Install pakai NPM dengan --legacy-peer-deps (Solusi konflik date-fns)
-RUN npm install --legacy-peer-deps
+# Install library dari internet (FastAPI, Uvicorn, dll)
+# PENTING: Pastikan 'emergentintegrations' SUDAH DIHAPUS dari requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# 3. FIX: Install Manual AJV v8 (Solusi error build React/Craco)
-RUN npm install ajv@8 --save-dev --legacy-peer-deps
+# 2. Copy Library Lokal (emergentintegrations)
+# Kita copy folder 'packages' dari repository ke dalam container
+COPY packages/ ./packages/
 
-# Copy source code sisanya
-COPY frontend/ .
+# 3. Copy Source Code Backend
+COPY backend/ ./backend/
 
-# Build args for environment
-ARG REACT_APP_BACKEND_URL
-ENV REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL
+# 4. Setting Environment Variable
+# Ini agar Python tahu kalau ada library tambahan di folder packages
+ENV PYTHONPATH=/app:/app/packages
 
-# 4. FIX: Build pakai NPM
-RUN npm run build
-
-# Production stage
-FROM nginx:alpine
-
-# Copy built assets
-COPY --from=builder /app/build /usr/share/nginx/html
-
-# Copy nginx config 
-# (Saya comment dulu baris di bawah ini agar build tidak gagal jika file config belum ada)
-# COPY infra/docker/nginx.conf /etc/nginx/conf.d/default.conf
-
-EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
+# 5. Jalankan Server
+WORKDIR /app/backend
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001"]
