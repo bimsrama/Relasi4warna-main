@@ -1,32 +1,28 @@
-# Relasi4Warna Backend Dockerfile
+# Gunakan Python versi ringan
 FROM python:3.11-slim
 
+# Set folder kerja di dalam container
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    libffi-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements first for better caching
+# 1. Install Dependencies Umum
+# Copy file requirements.txt dari folder backend ke dalam container
 COPY backend/requirements.txt .
+
+# Install library dari internet (FastAPI, Uvicorn, dll)
+# PENTING: Pastikan 'emergentintegrations' SUDAH DIHAPUS dari requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy packages
+# 2. Copy Library Lokal (emergentintegrations)
+# Kita copy folder 'packages' dari repository ke dalam container
 COPY packages/ ./packages/
 
-# Copy backend code
+# 3. Copy Source Code Backend
 COPY backend/ ./backend/
 
-# Set Python path to include packages
+# 4. Setting Environment Variable
+# Ini agar Python tahu kalau ada library tambahan di folder packages
 ENV PYTHONPATH=/app:/app/packages
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8001/health || exit 1
-
-# Run with uvicorn
+# 5. Jalankan Server
 WORKDIR /app/backend
-EXPOSE 8001
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001"]
