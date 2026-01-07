@@ -2,8 +2,8 @@ import React, { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useLanguage, useAuth, API } from "../App";
 import { Button } from "../components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Home, Briefcase, Users, Heart, ArrowRight, Globe, LogOut, Clock, FileText, Settings, Bell, BellOff, Sparkles, Loader2, Trophy, Flame, Grid3X3 } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
+import { Home, Briefcase, Users, Heart, ArrowRight, Globe, LogOut, Clock, FileText, Settings, Bell, BellOff, Sparkles, Loader2, Trophy, Flame, Grid3X3, Crown, BarChart3, GraduationCap, TrendingUp } from "lucide-react";
 import axios from "axios";
 import { toast } from "sonner";
 
@@ -42,16 +42,28 @@ const DashboardPage = () => {
   const [generatingTip, setGeneratingTip] = useState(false);
   const [latestTip, setLatestTip] = useState(null);
 
+  // Elite Progress Tracking
+  const [activeTab, setActiveTab] = useState('history'); // 'history' or 'elite'
+  const [userTier, setUserTier] = useState('free');
+  const [eliteStats, setEliteStats] = useState({
+    totalReports: 0,
+    modulesUsed: {},
+    reportsHistory: []
+  });
+  const [loadingElite, setLoadingElite] = useState(false);
+
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [historyRes, tipsRes] = await Promise.all([
+        const [historyRes, tipsRes, meRes] = await Promise.all([
           axios.get(`${API}/quiz/history`, { headers: { Authorization: `Bearer ${token}` } }),
-          axios.get(`${API}/tips/subscription`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => ({ data: { subscribed: false } }))
+          axios.get(`${API}/tips/subscription`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => ({ data: { subscribed: false } })),
+          axios.get(`${API}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
         ]);
         setResults(historyRes.data.results || []);
         setTipsSubscribed(tipsRes.data.subscribed);
         setTipsArchetype(tipsRes.data.primary_archetype);
+        setUserTier(meRes.data.tier || 'free');
       } catch (error) {
         console.error("Error fetching data:", error);
       } finally {
@@ -61,6 +73,41 @@ const DashboardPage = () => {
 
     fetchData();
   }, [token]);
+
+  // Fetch Elite Stats when Elite tab is active
+  useEffect(() => {
+    const fetchEliteStats = async () => {
+      if (activeTab !== 'elite' || (userTier !== 'elite' && userTier !== 'elite_plus' && userTier !== 'certification')) return;
+      
+      setLoadingElite(true);
+      try {
+        const response = await axios.get(`${API}/user/elite-stats`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        setEliteStats(response.data);
+      } catch (error) {
+        // Fallback to computing from results
+        const paidResults = results.filter(r => r.is_paid);
+        setEliteStats({
+          totalReports: paidResults.length,
+          modulesUsed: {
+            quarterly: 0,
+            parentChild: 0,
+            business: 0,
+            team: 0,
+            certification: 0,
+            coaching: 0,
+            governance: 0
+          },
+          reportsHistory: paidResults.slice(0, 5)
+        });
+      } finally {
+        setLoadingElite(false);
+      }
+    };
+
+    fetchEliteStats();
+  }, [activeTab, userTier, token, results]);
 
   const toggleTipsSubscription = async () => {
     setTogglingTips(true);
@@ -390,7 +437,151 @@ const DashboardPage = () => {
             </CardContent>
           </Card>
 
-          {/* Results History */}
+          {/* Tab Selector - History vs Elite Progress */}
+          {(userTier === 'elite' || userTier === 'elite_plus' || userTier === 'certification') && (
+            <div className="flex justify-center gap-2 mb-6 animate-slide-up stagger-2">
+              <Button
+                variant={activeTab === 'history' ? 'default' : 'outline'}
+                onClick={() => setActiveTab('history')}
+                className="rounded-full"
+                data-testid="tab-history"
+              >
+                <FileText className="w-4 h-4 mr-2" />
+                {t("Riwayat Tes", "Test History")}
+              </Button>
+              <Button
+                variant={activeTab === 'elite' ? 'default' : 'outline'}
+                onClick={() => setActiveTab('elite')}
+                className={`rounded-full ${activeTab === 'elite' ? 'bg-gradient-to-r from-amber-500 to-orange-500' : ''}`}
+                data-testid="tab-elite-progress"
+              >
+                <Crown className="w-4 h-4 mr-2" />
+                {t("Elite Progress", "Elite Progress")}
+              </Button>
+            </div>
+          )}
+
+          {/* Elite Progress Tab Content */}
+          {activeTab === 'elite' && (userTier === 'elite' || userTier === 'elite_plus' || userTier === 'certification') && (
+            <div className="animate-slide-up stagger-2">
+              {/* Elite Stats Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                <Card className="bg-gradient-to-br from-amber-500/5 to-orange-500/5 border-amber-500/20" data-testid="elite-stat-tier">
+                  <CardContent className="p-6 text-center">
+                    <div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center mx-auto mb-3">
+                      <Crown className="w-6 h-6 text-amber-500" />
+                    </div>
+                    <p className="text-2xl font-bold text-foreground capitalize">{userTier.replace('_', ' ')}</p>
+                    <p className="text-sm text-muted-foreground">{t("Tier Anda", "Your Tier")}</p>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-gradient-to-br from-emerald-500/5 to-green-500/5 border-emerald-500/20" data-testid="elite-stat-reports">
+                  <CardContent className="p-6 text-center">
+                    <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center mx-auto mb-3">
+                      <BarChart3 className="w-6 h-6 text-emerald-500" />
+                    </div>
+                    <p className="text-2xl font-bold text-foreground">{results.filter(r => r.is_paid).length}</p>
+                    <p className="text-sm text-muted-foreground">{t("Laporan Dibuat", "Reports Generated")}</p>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-gradient-to-br from-violet-500/5 to-purple-500/5 border-violet-500/20" data-testid="elite-stat-modules">
+                  <CardContent className="p-6 text-center">
+                    <div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center mx-auto mb-3">
+                      <TrendingUp className="w-6 h-6 text-violet-500" />
+                    </div>
+                    <p className="text-2xl font-bold text-foreground">
+                      {Object.values(eliteStats.modulesUsed || {}).reduce((a, b) => a + b, 0) || results.filter(r => r.is_paid).length}
+                    </p>
+                    <p className="text-sm text-muted-foreground">{t("Modul Digunakan", "Modules Used")}</p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Module Usage Breakdown */}
+              <Card className="mb-8" data-testid="module-breakdown">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-amber-500" />
+                    {t("Penggunaan Modul", "Module Usage")}
+                  </CardTitle>
+                  <CardDescription>{t("Modul yang telah Anda gunakan", "Modules you have used")}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {[
+                      { key: 'quarterly', label: t("Quarterly", "Quarterly"), icon: Clock, color: 'blue' },
+                      { key: 'parentChild', label: t("Parent-Child", "Parent-Child"), icon: Heart, color: 'pink' },
+                      { key: 'business', label: t("Business", "Business"), icon: Briefcase, color: 'emerald' },
+                      { key: 'team', label: t("Team", "Team"), icon: Users, color: 'violet' },
+                    ].map(module => (
+                      <div key={module.key} className={`p-4 rounded-lg bg-${module.color}-500/5 border border-${module.color}-500/20 text-center`}>
+                        <module.icon className={`w-5 h-5 text-${module.color}-500 mx-auto mb-2`} />
+                        <p className="text-lg font-bold text-foreground">{eliteStats.modulesUsed?.[module.key] || 0}</p>
+                        <p className="text-xs text-muted-foreground">{module.label}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {userTier === 'elite_plus' && (
+                    <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t">
+                      {[
+                        { key: 'certification', label: t("Certification", "Certification"), icon: GraduationCap, color: 'violet' },
+                        { key: 'coaching', label: t("Coaching", "Coaching"), icon: Trophy, color: 'cyan' },
+                        { key: 'governance', label: t("Governance", "Governance"), icon: BarChart3, color: 'emerald' },
+                      ].map(module => (
+                        <div key={module.key} className="p-3 rounded-lg bg-secondary text-center">
+                          <module.icon className="w-4 h-4 text-violet-500 mx-auto mb-1" />
+                          <p className="text-sm font-bold text-foreground">{eliteStats.modulesUsed?.[module.key] || 0}</p>
+                          <p className="text-xs text-muted-foreground">{module.label}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Quick Actions */}
+              <Card data-testid="elite-quick-actions">
+                <CardHeader>
+                  <CardTitle>{t("Aksi Cepat", "Quick Actions")}</CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-wrap gap-3">
+                  <Button 
+                    variant="outline" 
+                    onClick={() => navigate("/series")}
+                    className="rounded-full"
+                    data-testid="elite-new-test-btn"
+                  >
+                    <FileText className="w-4 h-4 mr-2" />
+                    {t("Tes Baru", "New Test")}
+                  </Button>
+                  {results.filter(r => r.is_paid).length > 0 && (
+                    <Button 
+                      onClick={() => navigate(`/elite-report/${results.find(r => r.is_paid)?.result_id}`)}
+                      className="rounded-full bg-gradient-to-r from-amber-500 to-orange-500"
+                      data-testid="elite-generate-btn"
+                    >
+                      <Sparkles className="w-4 h-4 mr-2" />
+                      {t("Buat Elite Report", "Generate Elite Report")}
+                    </Button>
+                  )}
+                  <Button 
+                    variant="outline" 
+                    onClick={() => navigate("/pricing")}
+                    className="rounded-full"
+                    data-testid="elite-upgrade-btn"
+                  >
+                    <Crown className="w-4 h-4 mr-2" />
+                    {userTier === 'elite' ? t("Upgrade ke Elite+", "Upgrade to Elite+") : t("Lihat Paket", "View Plans")}
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Results History - Only show when History tab is active */}
+          {activeTab === 'history' && (
           <div className="animate-slide-up stagger-2">
             <div className="flex items-center justify-between mb-6">
               <h2 className="heading-3 text-foreground">{t("Riwayat Tes", "Test History")}</h2>
@@ -491,6 +682,7 @@ const DashboardPage = () => {
               </div>
             )}
           </div>
+          )}
         </div>
       </main>
     </div>

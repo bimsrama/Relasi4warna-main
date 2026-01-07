@@ -7,9 +7,45 @@ Build a production-ready, monetizable web platform for an ORIGINAL relationship 
 - Dual-language (Indonesian/English)
 - Quiz engine with 24 questions per series
 - Free results + Paid detailed reports
-- Payment integration (Xendit)
-- Admin CMS
+- Payment integration (Midtrans)
+- Admin CMS with HITL moderation
 - PWA for mobile installation
+- AI Governance and Safety Framework
+
+## Architecture (Updated January 2025)
+
+### Monorepo Structure
+```
+/app
+├── /backend              → FastAPI API
+│   ├── server.py         → Main API (5800+ lines)
+│   ├── hitl_engine.py    → HITL implementation
+│   ├── output_router.py  → Governance→HITL→Output flow
+│   └── deep_dive_data.py → Premium content
+├── /frontend             → React web app
+├── /packages             → Shared business logic
+│   ├── /core            → Personality engine, scoring
+│   ├── /hitl            → Risk assessment, moderation
+│   ├── /governance      → Policy enforcement, audit
+│   └── /shared          → Types, utils, constants
+├── /infra/docker        → Dockerfiles, nginx config
+├── /scripts             → Build, deploy scripts
+└── /tests               → Backend + frontend tests
+```
+
+### Output Flow (Enforced at Runtime)
+1. **AI Generation** → 2. **Governance Policy Check** → 3. **HITL Risk Assessment** → 4. **Safety Gate** → 5. **Output**
+
+- Level 1 (Score <30): Auto-publish
+- Level 2 (Score 30-60): Publish with safety buffer
+- Level 3 (Score >60): Block for human review
+
+### Tier System
+- **FREE**: Basic quiz results
+- **PREMIUM**: Full AI report, PDF download (Rp99,000)
+- **ELITE**: Advanced modules (Quarterly, Parent-Child, Business, Team) (Rp299,000)
+- **ELITE+**: Certification, AI-Human coaching, Governance dashboard (Rp999,000)
+- **CERTIFICATION**: Practitioner program (Rp4,999,000)
 
 ## User Personas
 1. **Parents/Family Members** - Understanding family communication dynamics
@@ -205,11 +241,248 @@ Build a production-ready, monetizable web platform for an ORIGINAL relationship 
 - [x] **Login Page Update:**
   - Added "Lupa password?" link below password field
 
+### Phase 10 - Human-in-the-Loop (HITL) Moderation System (Completed - January 2025)
+- [x] **HITL Engine (`/app/backend/hitl_engine.py`):**
+  - 3-Level Risk System:
+    - Level 1 (Normal): Auto-publish AI report (score < 30)
+    - Level 2 (Sensitive): Publish with safety buffer (score 30-69)
+    - Level 3 (Critical): Hold report, require human review (score >= 70 or red keywords)
+  - Risk Scoring Engine with configurable weights
+  - Keyword Detection System (5 categories):
+    - RED: Crisis/violence/self-harm → Immediate Level 3
+    - YELLOW: Distress/hopelessness
+    - WEAPONIZATION: Control/domination intent
+    - CLINICAL: Diagnostic terms → Blocked
+    - LABELING: Demeaning labels → Blocked
+  - Blocked Output Pattern Detection
+  - Probabilistic Language Rewriter (absolute → probabilistic)
+  - Safety Buffer & Safe Response messages (dual-language)
+  - 10% Sampling Rate for Level 2 reviews
+- [x] **Report Generation Integration:**
+  - Pre-generation risk assessment (user context)
+  - Post-generation risk assessment (AI output)
+  - Automatic model fallback (GPT-5.2 → GPT-4o)
+  - HITL status tracking in reports
+- [x] **Admin Moderation Queue API:**
+  - GET /api/admin/hitl/stats - Statistics dashboard
+  - GET /api/admin/hitl/queue - List queue items with filters
+  - GET /api/admin/hitl/queue/{queue_id} - Detail view with audit logs
+  - POST /api/admin/hitl/queue/{queue_id}/decision - Process moderation decision
+  - GET /api/admin/hitl/keywords - List risk keywords
+  - PUT /api/admin/hitl/keywords/{category} - Update keywords
+  - GET /api/admin/hitl/assessments - Risk assessment history
+  - GET /api/admin/hitl/audit-logs - Audit log history
+- [x] **Admin Moderation UI:**
+  - New "HITL" tab in Admin CMS with pending badge
+  - Stats cards (Pending, Critical, Sensitive, Normal)
+  - Moderation Queue with status/risk filters
+  - Detail modal with:
+    - Risk info (level, score, series, status)
+    - Detected keywords display
+    - Risk flags display
+    - Original AI output preview
+    - 5 Moderator action buttons:
+      1. Approve As-Is
+      2. Add Safety Buffer
+      3. Edit Output
+      4. Safe Response Only
+      5. Escalate
+    - Moderator notes input
+    - Audit log history
+- [x] **Database Collections:**
+  - risk_keywords: Category-based keyword lists (ID/EN)
+  - risk_assessments: Assessment history with scores/flags
+  - moderation_queue: Items pending/processed review
+  - audit_logs: Moderator action history
+  - hitl_events: Event tracking for analytics
+
+### Phase 13 - Elite Tier Implementation (Completed - January 7, 2025)
+- [x] **Elite Tier System:**
+  - Tier levels: free, premium, elite
+  - Admin endpoint to update user tier: PUT /api/admin/users/{user_id}/tier
+  - Elite pricing products added (monthly, quarterly, annual, single)
+- [x] **Elite Report Endpoint:**
+  - POST /api/report/elite/{result_id} - Generate elite report
+  - GET /api/report/elite/{result_id} - Get cached elite report
+  - Supports all 4 elite modules
+- [x] **Elite Module 10 — QUARTERLY PERSONAL RE-CALIBRATION:**
+  - Compare previous vs current assessment
+  - What Has Stabilized, What Is Still Reactive
+  - Growth Signals, Next-Quarter Focus
+  - No "regression" language
+- [x] **Elite Module 11 — PARENT-CHILD RELATIONSHIP DYNAMICS:**
+  - Age ranges: early_childhood, school_age, teen, young_adult
+  - How Parent's Tendencies Are Felt by Child
+  - Developmentally aware needs
+  - Common Misalignments (intent vs impact)
+  - Emotionally Safe Response scripts
+  - Repair Ritual (age-appropriate)
+- [x] **Elite Module 12 — BUSINESS & LEADERSHIP RELATIONAL INTELLIGENCE:**
+  - User roles: founder, leader, partner
+  - Counterpart style analysis
+  - Leadership Strengths, Tension Points
+  - Decision-Making Friction, Communication Alignment
+  - Conflict Repair Script (professional tone)
+- [x] **Elite Module 13 — TEAM & ORGANIZATIONAL DYNAMICS:**
+  - Team composition analysis
+  - Systemic Friction Risks
+  - Team Operating Agreements
+  - Leader Calibration Guide
+- [x] **Elite HITL+ Enhanced Rules:**
+  - Auto-flag Level 2 for multi-domain conflict
+  - Auto-flag Level 2 for power asymmetry
+  - Auto-flag Level 3 for coercion/dominance content
+- [x] **Elite Pricing:**
+  - elite_monthly: Rp 499,000 / $34.99
+  - elite_quarterly: Rp 1,299,000 / $89.99
+  - elite_annual: Rp 3,999,000 / $279.99
+  - elite_single: Rp 299,000 / $19.99
+- [x] **Elite Frontend UI (Completed - January 7, 2025):**
+  - New EliteReportPage.js at /elite-report/{resultId}
+  - 4 Module selection cards with toggle switches
+  - Form inputs for each module (previous snapshot, child age, user role, team profiles)
+  - "Buat Laporan Elite" button generates report via API
+  - Existing Elite report displayed with WhatsApp share
+  - Result page has Elite CTA card linking to Elite Report page
+  - Pricing page updated with Elite & Elite+ section
+  - UserResponse model includes tier field (free, elite, elite_plus)
+- [x] **Elite+ Tab Integration (Completed - January 7, 2025):**
+  - Elite/Elite+ tabs in EliteReportPage for tier switching
+  - Elite+ modules: Certification (Level 1-4), AI-Human Coaching, Governance Dashboard
+  - Elite+ upgrade notice for non-Elite+ users with CTA button
+  - Module toggle switches and configuration forms
+- [x] **Elite Progress Tracking Dashboard (Completed - January 7, 2025):**
+  - New "Elite Progress" tab in Dashboard for Elite/Elite+ users
+  - Stats cards: Tier, Laporan Dibuat, Modul Digunakan
+  - Module usage breakdown: Quarterly, Parent-Child, Business, Team
+  - Quick Actions: Tes Baru, Buat Elite Report, Upgrade buttons
+
+### Phase 12 - Premium Personality Intelligence Engine (Completed - January 7, 2025)
+- [x] **ISO-STYLE AI Report Prompt:**
+  - Implemented 7 mandatory sections:
+    1. SECTION 1 — EXECUTIVE SELF SNAPSHOT
+    2. SECTION 2 — RELATIONAL IMPACT MAP
+    3. SECTION 3 — STRESS & BLIND SPOT AWARENESS
+    4. SECTION 4 — HOW TO RELATE WITH OTHER PERSONALITY STYLES
+    5. SECTION 5 — PERSONAL GROWTH & CALIBRATION PLAN
+    6. SECTION 6 — RELATIONSHIP REPAIR & PREVENTION TOOLS
+    7. SECTION 7 — ETHICAL SAFETY CLOSING
+  - AI Governance compliance (Annex A, B, C)
+  - Absolute limits enforcement (no diagnosis, no labeling, no manipulation)
+  - Probabilistic language requirement
+  - Dual-language support (ID/EN)
+- [x] **Deep Dive Premium Report Updated:**
+  - Same 7-section ISO-STYLE format
+  - Enhanced with Deep Dive specific data (section scores, type interactions)
+  - Stress profile integration
+- [x] **Force Regenerate Option:**
+  - Added `force=true` parameter to regenerate reports with new prompt
+  - Uses upsert to replace existing reports
+- [x] **Admin Clear Cache Endpoint:**
+  - DELETE /api/admin/reports/clear-cache
+  - Clears all cached reports for fresh regeneration
+- [x] **PDF Download Fix:**
+  - Fixed authentication issue (window.open → axios with auth token)
+  - Proper blob download with filename
+- [x] **WhatsApp Share Feature:**
+  - "Bagikan via WhatsApp" button for paid users
+  - "Bagikan Hasil ke WhatsApp" button for free results
+  - "Share" button in AI Report section for sharing summary
+  - Formatted message with emojis, archetype info, and app link
+  - Dual-language message templates (ID/EN)
+  - Viral loop: encourages friends to take the test
+- [x] **Enhanced Admin CMS - Questions Tab:**
+  - Add Question form with 4 archetype options
+  - Toggle question active/inactive status
+  - Delete question functionality
+  - Bulk create questions endpoint
+  - Questions stats by series
+  - Stress marker flag support
+  - Question reordering
+- [x] **Enhanced Admin CMS - Pricing Tab:**
+  - Create pricing tier with IDR/USD prices
+  - Edit pricing tier
+  - Active/Popular status badges
+  - Features list support (ID/EN)
+  - Product ID, descriptions, visibility controls
+- [x] **Enhanced Admin CMS - Coupons Tab:**
+  - Advanced coupon creation with:
+    - Discount types: percent, fixed_idr, fixed_usd
+    - Valid from/until dates
+    - Min purchase requirement
+    - Valid products restriction
+    - One per user option
+  - Toggle coupon active status
+  - Coupon usage statistics
+  - Quick Add + Advanced form
+- [x] **Admin Dashboard Overview:**
+  - User stats (total, today, week)
+  - Quiz stats (total, today, week)
+  - Payment stats (total paid, today, week, revenue month)
+  - Archetype distribution
+  - Series distribution
+- [x] **HITL Analytics Dashboard (Full Implementation):**
+  - Risk distribution cards (Level 1, 2, 3 counts)
+  - Average response time metric
+  - Risk distribution progress bars with percentages
+  - Queue status visualization
+  - Timeline chart with stacked bars (Level 1/2/3)
+  - Keyword trends display (top detected keywords)
+  - Moderator performance table (total actions, breakdown)
+  - Day range selector (7, 30, 90 days)
+  - Export buttons (JSON & CSV)
+  - Dual-language support
+- [x] **Deep Dive Premium Test:**
+  - 16 questions in 4 sections:
+    1. Inner Motivation (4 questions)
+    2. Stress Response (4 questions)
+    3. Relationship Dynamics (4 questions)
+    4. Communication Patterns (4 questions)
+  - 4 archetype options per question
+  - Type interactions data for each archetype
+  - **Enhanced AI Report Generation:**
+    - Professional system prompt with 9 comprehensive sections
+    - Executive Summary
+    - Deep Personality Profile (who you are, values, emotional needs)
+    - Hidden Motivation Patterns
+    - Stress Response Map (triggers, escalation, de-escalation)
+    - Impact on 4 Types (detailed analysis for each archetype)
+    - Deep Connection Guide (specific scripts for each type)
+    - Blind Spots & Growth Areas (3 blind spots + shadow side)
+    - 30-Day Transformation Plan (weekly breakdown)
+    - Closing transformative message
+    - 3500-4500 words premium report
+- [x] **SEO Foundation:**
+  - SEO component with meta tags
+  - sitemap.xml
+  - robots.txt
+  - Enhanced index.html meta tags
+
+### Phase 14 - HITL Analytics Dashboard Enhancement (Completed - January 7, 2025)
+- [x] **Recharts Integration:**
+  - Pie Chart: Risk Distribution (Normal/Sensitive/Critical percentages)
+  - Bar Chart: Moderation Status (Approved/Pending/Rejected counts)
+  - Area Chart: Risk Timeline (Level 1/2/3 trends over time)
+  - Horizontal Bar Chart: Top Detected Keywords
+- [x] **6 Metrics Cards:**
+  - Total Flagged (sum of all risk levels)
+  - Level 1/2/3 individual counts
+  - Average Response Time
+  - Approval Rate percentage
+- [x] **Additional Features:**
+  - Moderator Performance table with action breakdown
+  - Export JSON/CSV buttons
+  - Language toggle (ID/EN) in header
+- [x] **Language Toggle Re-test:**
+  - HITL Analytics page: ID/EN working
+  - Elite Report page: ID/EN added and working
+  - Dashboard Elite Progress: ID/EN working
+
 ## Tech Stack
 - Backend: FastAPI + MongoDB
 - Frontend: React + Tailwind + shadcn/ui
 - Auth: JWT + Emergent Google OAuth
-- Payments: Xendit (SIMULATED)
+- Payments: Midtrans Snap (SANDBOX - Updated from Xendit January 2025)
 - AI: OpenAI GPT-5.2 via Emergent LLM Key (WORKING)
 - Email: Resend (MOCKED - needs API key)
 - PDF: ReportLab
@@ -240,15 +513,23 @@ Build a production-ready, monetizable web platform for an ORIGINAL relationship 
 - [x] Family/Team Pack system
 - [x] Communication Challenge with badges
 - [x] Blog CMS with full admin CRUD
+- [x] Midtrans Payment Integration (Sandbox) - January 2025
+- [x] Watermark "Made with Emergent" Removed - January 2025
 
 ### P1 (High Priority) - PENDING
-- [ ] Xendit real payment integration (needs API keys)
+- [ ] Midtrans Production Keys (needs production API keys for live payments)
 - [ ] Resend real email delivery (needs API key in .env RESEND_API_KEY)
 - [x] Compatibility matrices detail view (COMPLETED - January 2025)
+- [x] Enhanced Admin CMS (Questions/Pricing/Coupons) - COMPLETED January 7, 2025
+- [x] HITL Analytics Dashboard - COMPLETED January 7, 2025
+- [x] Deep Dive Premium Test with Enhanced AI Report - COMPLETED January 7, 2025
 
 ### P2 (Medium Priority) - BACKLOG
-- [ ] SEO optimization (meta tags, sitemap)
-- [ ] Analytics dashboard enhancements
+- [x] SEO optimization (meta tags, sitemap) - COMPLETED January 7, 2025
+- [ ] Language toggle verification di semua halaman baru
+- [ ] Refactoring server.py ke struktur modular (routers, models, services) - server.py ~5700 lines
+- [ ] Additional SEO improvements (dynamic meta tags for blog posts)
+- [ ] Multi-chapter formatted PDF report
 
 ## API Endpoints
 
@@ -313,15 +594,26 @@ Build a production-ready, monetizable web platform for an ORIGINAL relationship 
 
 ### Admin
 - GET /api/admin/stats
+- GET /api/admin/dashboard/overview - **NEW** (comprehensive stats)
 - GET /api/admin/questions
 - POST /api/admin/questions
+- POST /api/admin/questions/bulk - **NEW**
 - PUT /api/admin/questions/{question_id}
 - DELETE /api/admin/questions/{question_id}
+- POST /api/admin/questions/{question_id}/toggle - **NEW**
+- POST /api/admin/questions/reorder - **NEW**
+- GET /api/admin/questions/stats - **NEW**
 - GET /api/admin/pricing
+- POST /api/admin/pricing - **NEW**
 - PUT /api/admin/pricing/{product_id}
+- DELETE /api/admin/pricing/{product_id} - **NEW**
 - GET /api/admin/coupons
 - POST /api/admin/coupons
+- POST /api/admin/coupons/advanced - **NEW**
 - DELETE /api/admin/coupons/{coupon_id}
+- PUT /api/admin/coupons/{coupon_id} - **NEW**
+- POST /api/admin/coupons/{coupon_id}/toggle - **NEW**
+- GET /api/admin/coupons/usage-stats - **NEW**
 - GET /api/admin/users
 - GET /api/admin/results
 - GET /api/admin/tips-subscribers
@@ -330,6 +622,19 @@ Build a production-ready, monetizable web platform for an ORIGINAL relationship 
 - POST /api/admin/blog/articles
 - PUT /api/admin/blog/articles/{article_id}
 - DELETE /api/admin/blog/articles/{article_id}
+
+### HITL Analytics - **NEW SECTION**
+- GET /api/analytics/hitl/overview
+- GET /api/analytics/hitl/timeline
+- GET /api/analytics/hitl/moderator-performance
+- GET /api/analytics/hitl/export
+
+### Deep Dive Premium - **NEW SECTION**
+- GET /api/deep-dive/questions
+- POST /api/deep-dive/submit
+- GET /api/deep-dive/result/{result_id}
+- POST /api/deep-dive/generate-report/{result_id}
+- GET /api/deep-dive/type-interactions/{archetype}
 
 
 ### Email
@@ -368,13 +673,48 @@ Build a production-ready, monetizable web platform for an ORIGINAL relationship 
 - /pricing - Pricing Page
 - /how-it-works - How It Works
 - /faq - FAQ
-- /admin - Admin CMS (6 tabs: Questions, Users, Results, Coupons, Tips, Blog)
+- /admin - Admin CMS (8 tabs: Questions, Pricing, Coupons, Users, Results, Tips, Blog, HITL)
 - /login - Login
 - /register - Register
 - /terms - Terms & Conditions
 - /privacy - Privacy Policy
 - /compatibility - Compatibility Matrix
+- /ai-safeguard-policy - AI Safeguard Policy
+- /deep-dive/:resultId - Deep Dive Premium Test - **NEW**
+- /hitl-analytics - HITL Analytics Dashboard - **NEW**
+- /elite-report/:resultId - Elite Report Page with Module Selection - **NEW (January 7, 2025)**
 
 ## MOCKED/STUBBED Features
 - **Resend Email**: Returns mock success when RESEND_API_KEY is empty
-- **Xendit Payment**: Uses /api/payment/simulate-payment for demo purposes
+- **Midtrans Payment**: Using SANDBOX keys (SB-Mid-server-xxx) for demo purposes - Updated January 2025
+
+## Backend Architecture (Refactored - January 7, 2025)
+```
+/app/backend/
+├── server.py           # Main entry point (~5800 lines - monolithic, but stable)
+├── main.py             # NEW - Future modular entry point (documentation)
+├── routes/
+│   ├── __init__.py
+│   └── auth.py         # Auth routes (created, for future migration)
+├── models/
+│   ├── __init__.py
+│   └── schemas.py      # Pydantic models (created)
+├── services/
+│   ├── __init__.py
+│   └── ai_service.py   # AI generation service (created)
+├── utils/
+│   ├── __init__.py
+│   ├── database.py     # Database connection (created)
+│   └── auth.py         # Auth utilities (created)
+├── hitl_engine.py      # HITL Engine
+├── questions_data.py   # Questions data
+└── deep_dive_data.py   # Deep dive questions
+```
+
+Refactoring Status:
+- [x] utils/database.py - Database connection module
+- [x] utils/auth.py - Authentication utilities
+- [x] models/schemas.py - All Pydantic models
+- [x] services/ai_service.py - AI report generation prompts
+- [x] routes/auth.py - Auth routes template
+- [ ] Full migration from server.py - Pending (stable as-is)

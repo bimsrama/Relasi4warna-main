@@ -5,7 +5,7 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Progress } from "../components/ui/progress";
 import { Input } from "../components/ui/input";
-import { ArrowLeft, ArrowRight, Download, Share2, Lock, CheckCircle, AlertTriangle, Sparkles, Mail, FileText, Loader2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Download, Share2, Lock, CheckCircle, AlertTriangle, Sparkles, Mail, FileText, Loader2, MessageCircle } from "lucide-react";
 import axios from "axios";
 import { toast } from "sonner";
 import ShareResult from "../components/ShareResult";
@@ -53,6 +53,122 @@ const ResultPage = () => {
   const [showEmailForm, setShowEmailForm] = useState(false);
   const [generatingAiReport, setGeneratingAiReport] = useState(false);
   const [aiReport, setAiReport] = useState(null);
+
+  // WhatsApp Share Function
+  const handleWhatsAppShare = () => {
+    if (!result || !primaryArchetype) return;
+    
+    const primaryName = language === "id" ? primaryArchetype.name_id : primaryArchetype.name_en;
+    const secondaryName = secondaryArchetype ? (language === "id" ? secondaryArchetype.name_id : secondaryArchetype.name_en) : "";
+    const seriesName = {
+      family: language === "id" ? "Keluarga" : "Family",
+      business: language === "id" ? "Bisnis" : "Business", 
+      friendship: language === "id" ? "Persahabatan" : "Friendship",
+      couples: language === "id" ? "Pasangan" : "Couples"
+    }[result.series] || result.series;
+
+    const appUrl = window.location.origin;
+    
+    const message = language === "id" 
+      ? `🎯 *Hasil Tes Relasi4Warna Saya*
+
+Saya baru saja menyelesaikan tes kepribadian komunikasi untuk konteks *${seriesName}*!
+
+📊 *Hasil Saya:*
+• Tipe Utama: *${primaryName}*
+• Tipe Sekunder: *${secondaryName}*
+• Balance Index: ${result.balance_index?.toFixed(1) || "N/A"}
+
+${primaryName} adalah tipe yang ${
+  result.primary_archetype === "driver" ? "berorientasi pada hasil dan keputusan" :
+  result.primary_archetype === "spark" ? "ekspresif dan suka koneksi sosial" :
+  result.primary_archetype === "anchor" ? "mengutamakan stabilitas dan harmoni" :
+  "analitis dan terstruktur"
+}.
+
+🔗 Mau tau tipe komunikasimu? Coba tes gratis di:
+${appUrl}
+
+#Relasi4Warna #TesKepribadian #KomunikasiSehat`
+      : `🎯 *My Relasi4Warna Test Results*
+
+I just completed the communication personality test for *${seriesName}* context!
+
+📊 *My Results:*
+• Primary Type: *${primaryName}*
+• Secondary Type: *${secondaryName}*
+• Balance Index: ${result.balance_index?.toFixed(1) || "N/A"}
+
+${primaryName} is a type that ${
+  result.primary_archetype === "driver" ? "is results and decision-oriented" :
+  result.primary_archetype === "spark" ? "is expressive and loves social connection" :
+  result.primary_archetype === "anchor" ? "prioritizes stability and harmony" :
+  "is analytical and structured"
+}.
+
+🔗 Want to know your communication type? Try the free test at:
+${appUrl}
+
+#Relasi4Warna #PersonalityTest #HealthyCommunication`;
+
+    // Encode the message for WhatsApp URL
+    const encodedMessage = encodeURIComponent(message);
+    const whatsappUrl = `https://wa.me/?text=${encodedMessage}`;
+    
+    // Open WhatsApp
+    window.open(whatsappUrl, '_blank');
+    toast.success(t("Membuka WhatsApp...", "Opening WhatsApp..."));
+  };
+
+  // WhatsApp Share AI Report (summary)
+  const handleWhatsAppShareAIReport = () => {
+    if (!aiReport || !result) return;
+    
+    const primaryName = language === "id" ? primaryArchetype?.name_id : primaryArchetype?.name_en;
+    
+    // Extract first section for summary
+    const summaryMatch = aiReport.match(/## SECTION 1.*?(?=## SECTION 2|$)/s);
+    const summary = summaryMatch 
+      ? summaryMatch[0].replace(/## SECTION 1.*?\n/, '').replace(/\*\*/g, '*').substring(0, 500) + "..."
+      : "";
+    
+    const appUrl = window.location.origin;
+    
+    const message = language === "id"
+      ? `🌟 *Laporan AI Kepribadian Saya*
+
+Tipe: *${primaryName}*
+
+📝 *Ringkasan:*
+${summary}
+
+---
+💡 Ini hanya sebagian dari laporan lengkap saya dari Relasi4Warna.
+
+🔗 Mau dapat insight tentang gaya komunikasimu? Coba di:
+${appUrl}
+
+#Relasi4Warna #AIPersonalityReport`
+      : `🌟 *My AI Personality Report*
+
+Type: *${primaryName}*
+
+📝 *Summary:*
+${summary}
+
+---
+💡 This is just a portion of my full report from Relasi4Warna.
+
+🔗 Want insights about your communication style? Try at:
+${appUrl}
+
+#Relasi4Warna #AIPersonalityReport`;
+
+    const encodedMessage = encodeURIComponent(message);
+    const whatsappUrl = `https://wa.me/?text=${encodedMessage}`;
+    window.open(whatsappUrl, '_blank');
+    toast.success(t("Membuka WhatsApp...", "Opening WhatsApp..."));
+  };
 
   useEffect(() => {
     const fetchResult = async () => {
@@ -322,6 +438,21 @@ const ResultPage = () => {
                   ))}
                 </ul>
               </div>
+              
+              {/* Share Result Button */}
+              <div className="pt-4 border-t mt-4">
+                <Button 
+                  onClick={handleWhatsAppShare}
+                  className="w-full bg-[#25D366] hover:bg-[#128C7E] text-white"
+                  data-testid="whatsapp-share-free-btn"
+                >
+                  <MessageCircle className="w-5 h-5 mr-2" />
+                  {t("Bagikan Hasil ke WhatsApp", "Share Result to WhatsApp")}
+                </Button>
+                <p className="text-xs text-center text-muted-foreground mt-2">
+                  {t("Ajak teman & keluarga untuk mengetahui tipe komunikasi mereka!", "Invite friends & family to discover their communication type!")}
+                </p>
+              </div>
             </CardContent>
           </Card>
 
@@ -399,7 +530,29 @@ const ResultPage = () => {
                 <div className="flex flex-col sm:flex-row gap-3 justify-center mb-6">
                   <Button 
                     className="btn-primary" 
-                    onClick={() => window.open(`${API}/report/pdf/${resultId}?language=${language}`, '_blank')}
+                    onClick={async () => {
+                      try {
+                        const response = await axios.get(
+                          `${API}/report/pdf/${resultId}?language=${language}`,
+                          { 
+                            headers: { Authorization: `Bearer ${token}` },
+                            responseType: 'blob'
+                          }
+                        );
+                        const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.setAttribute('download', `relasi4warna_report_${resultId}.pdf`);
+                        document.body.appendChild(link);
+                        link.click();
+                        link.remove();
+                        window.URL.revokeObjectURL(url);
+                        toast.success(t("PDF berhasil diunduh!", "PDF downloaded successfully!"));
+                      } catch (error) {
+                        console.error("PDF download error:", error);
+                        toast.error(t("Gagal mengunduh PDF", "Failed to download PDF"));
+                      }
+                    }}
                     data-testid="download-report-btn"
                   >
                     <Download className="w-5 h-5 mr-2" />
@@ -425,6 +578,15 @@ const ResultPage = () => {
                       <Sparkles className="w-5 h-5 mr-2" />
                     )}
                     {generatingAiReport ? t("Membuat...", "Generating...") : t("Laporan AI", "AI Report")}
+                  </Button>
+                  <Button 
+                    variant="outline"
+                    onClick={handleWhatsAppShare}
+                    className="bg-[#25D366] hover:bg-[#128C7E] text-white border-0"
+                    data-testid="whatsapp-share-btn"
+                  >
+                    <MessageCircle className="w-5 h-5 mr-2" />
+                    {t("Bagikan via WhatsApp", "Share via WhatsApp")}
                   </Button>
                 </div>
 
@@ -453,9 +615,20 @@ const ResultPage = () => {
                 {/* AI Report Display */}
                 {aiReport && (
                   <div className="p-4 rounded-xl bg-background border" data-testid="ai-report-content">
-                    <div className="flex items-center gap-2 mb-4">
-                      <Sparkles className="w-5 h-5 text-spark" />
-                      <h4 className="font-bold">{t("Laporan AI Personal", "Personal AI Report")}</h4>
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-5 h-5 text-spark" />
+                        <h4 className="font-bold">{t("Laporan AI Personal", "Personal AI Report")}</h4>
+                      </div>
+                      <Button 
+                        size="sm"
+                        onClick={handleWhatsAppShareAIReport}
+                        className="bg-[#25D366] hover:bg-[#128C7E] text-white"
+                        data-testid="whatsapp-share-ai-btn"
+                      >
+                        <MessageCircle className="w-4 h-4 mr-1" />
+                        {t("Share", "Share")}
+                      </Button>
                     </div>
                     <div className="prose prose-sm max-w-none dark:prose-invert text-sm max-h-96 overflow-y-auto">
                       {aiReport.split('\n').map((line, idx) => {
@@ -476,6 +649,55 @@ const ResultPage = () => {
                     </div>
                   </div>
                 )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Elite Tier CTA - For paid users */}
+          {result.is_paid && (
+            <Card className="mb-8 bg-gradient-to-br from-amber-500/5 to-orange-500/5 border-amber-500/20 animate-slide-up stagger-4" data-testid="elite-cta-card">
+              <CardContent className="p-6">
+                <div className="flex flex-col md:flex-row items-center gap-6">
+                  <div className="flex-shrink-0">
+                    <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center">
+                      <Sparkles className="w-8 h-8 text-amber-500" />
+                    </div>
+                  </div>
+                  <div className="flex-1 text-center md:text-left">
+                    <h3 className="text-lg font-bold text-foreground mb-2 flex items-center gap-2 justify-center md:justify-start">
+                      {t("Tingkatkan ke Elite", "Upgrade to Elite")}
+                      <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 text-xs font-medium">PRO</span>
+                    </h3>
+                    <p className="text-muted-foreground text-sm mb-3">
+                      {t(
+                        "Dapatkan modul spesialis: Parent-Child Dynamics, Business Leadership, Team Analysis, dan Quarterly Calibration.",
+                        "Get specialist modules: Parent-Child Dynamics, Business Leadership, Team Analysis, and Quarterly Calibration."
+                      )}
+                    </p>
+                    <div className="flex flex-wrap gap-2 justify-center md:justify-start">
+                      {[
+                        t("Dinamika Orangtua-Anak", "Parent-Child Dynamics"),
+                        t("Kepemimpinan Bisnis", "Business Leadership"),
+                        t("Analisis Tim", "Team Analysis"),
+                        t("Kalibrasi Kuartalan", "Quarterly Calibration")
+                      ].map((feature, idx) => (
+                        <span key={idx} className="px-2 py-1 rounded-full bg-amber-500/10 text-amber-700 text-xs">
+                          {feature}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <Button 
+                      onClick={() => navigate(`/elite-report/${resultId}`)}
+                      className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white"
+                      data-testid="elite-report-cta-btn"
+                    >
+                      <Sparkles className="w-4 h-4 mr-2" />
+                      {t("Lihat Elite Report", "View Elite Report")}
+                    </Button>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           )}

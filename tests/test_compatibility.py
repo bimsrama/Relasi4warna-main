@@ -6,7 +6,7 @@ import pytest
 import requests
 import os
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://colorrelating.preview.emergentagent.com')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://relasi-web.preview.emergentagent.com')
 
 class TestCompatibilityMatrix:
     """Tests for /api/compatibility/matrix endpoint"""

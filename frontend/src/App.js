@@ -28,6 +28,9 @@ import CompatibilityPage from "./pages/CompatibilityPage";
 import AISafeguardPage from "./pages/AISafeguardPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
+import DeepDivePage from "./pages/DeepDivePage";
+import HITLAnalyticsPage from "./pages/HITLAnalyticsPage";
+import EliteReportPage from "./pages/EliteReportPage";
 
 import "./App.css";
 
@@ -268,6 +271,21 @@ function AppRouter() {
       <Route path="/challenge" element={
         <ProtectedRoute>
           <ChallengePage />
+        </ProtectedRoute>
+      } />
+      <Route path="/deep-dive/:resultId" element={
+        <ProtectedRoute>
+          <DeepDivePage />
+        </ProtectedRoute>
+      } />
+      <Route path="/hitl-analytics" element={
+        <ProtectedRoute>
+          <HITLAnalyticsPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/elite-report/:resultId" element={
+        <ProtectedRoute>
+          <EliteReportPage />
         </ProtectedRoute>
       } />
       

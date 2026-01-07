@@ -2,10 +2,46 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Request,
 from fastapi.responses import JSONResponse, StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
+
+# ===========================================
+# CRITICAL: Create app and health endpoint FIRST
+# Before any heavy imports to ensure /health is available immediately
+# ===========================================
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+
+# Create the main app IMMEDIATELY
+app = FastAPI(title="Relasi4Warna API")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Health endpoint MUST be registered before any other imports
+@app.get("/health", tags=["health"])
+async def root_health_check():
+    """Health check endpoint for Kubernetes liveness/readiness probes"""
+    return {"status": "healthy", "service": "relasi4warna-api"}
+
+@app.get("/", tags=["health"])
+async def root_endpoint():
+    """Root endpoint"""
+    return {"message": "Relasi4Warna API", "status": "running", "docs": "/docs"}
+
+# ===========================================
+# Now load heavy imports
+# ===========================================
+
+from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict, Any
 import uuid
@@ -26,14 +62,54 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from questions_data import EXPANDED_QUESTIONS
+from deep_dive_data import DEEP_DIVE_QUESTIONS, TYPE_INTERACTIONS, DEEP_DIVE_REPORT_SECTIONS
+from hitl_engine import (
+    HITLEngine, RiskAssessmentInput, RiskLevel, ModerationDecision, ModerationAction,
+    process_ai_output_with_hitl, SAFETY_BUFFER, SAFE_RESPONSE
+)
 
-ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
-
-# MongoDB connection
+# MongoDB connection with proper settings for Atlas
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+
+# Configure MongoDB client with connection options suitable for production
+client = AsyncIOMotorClient(
+    mongo_url,
+    serverSelectionTimeoutMS=5000,  # 5 second timeout for server selection
+    connectTimeoutMS=10000,  # 10 second connection timeout
+    socketTimeoutMS=20000,  # 20 second socket timeout
+    maxPoolSize=10,  # Limit connection pool
+    retryWrites=True,  # Enable retry for write operations
+)
+
+# Extract database name from MONGO_URL or use DB_NAME env var
+def get_database_name(mongo_url: str, default_db_name: str = None) -> str:
+    """Extract database name from MongoDB URL or use default"""
+    # Try to get from environment first
+    if default_db_name:
+        return default_db_name
+    
+    # Extract from MongoDB URL (format: mongodb+srv://user:pass@host/dbname?options)
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(mongo_url)
+        if parsed.path and parsed.path != '/':
+            db_name = parsed.path.lstrip('/')
+            # Remove any query parameters that might be attached
+            if '?' in db_name:
+                db_name = db_name.split('?')[0]
+            if db_name:
+                return db_name
+    except Exception:
+        pass
+    
+    # Fallback to default
+    return "relasi4warna"
+
+db_name = get_database_name(mongo_url, os.environ.get('DB_NAME'))
+db = client[db_name]
+
+# Initialize HITL Engine
+hitl_engine = HITLEngine(db)
 
 # JWT Config
 JWT_SECRET = os.environ.get('JWT_SECRET', 'default_secret_key')
@@ -44,6 +120,19 @@ JWT_EXPIRATION_HOURS = 24 * 7  # 7 days
 XENDIT_API_KEY = os.environ.get('XENDIT_API_KEY', '')
 XENDIT_WEBHOOK_TOKEN = os.environ.get('XENDIT_WEBHOOK_TOKEN', '')
 
+# Midtrans Config (replacing Xendit)
+MIDTRANS_SERVER_KEY = os.environ.get('MIDTRANS_SERVER_KEY', 'SB-Mid-server-YOUR_SERVER_KEY')
+MIDTRANS_CLIENT_KEY = os.environ.get('MIDTRANS_CLIENT_KEY', 'SB-Mid-client-YOUR_CLIENT_KEY')
+MIDTRANS_IS_PRODUCTION = os.environ.get('MIDTRANS_IS_PRODUCTION', 'False') == 'True'
+
+# Initialize Midtrans Snap
+import midtransclient
+midtrans_snap = midtransclient.Snap(
+    is_production=MIDTRANS_IS_PRODUCTION,
+    server_key=MIDTRANS_SERVER_KEY,
+    client_key=MIDTRANS_CLIENT_KEY
+)
+
 # Resend Config
 RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'noreply@relasi4warna.com')
@@ -53,19 +142,18 @@ if RESEND_API_KEY:
 # LLM Config
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 
-# Create the main app
-app = FastAPI(title="Relasi4Warna API")
-
-# Create routers
+# Create routers (app already created at top of file)
 api_router = APIRouter(prefix="/api")
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 quiz_router = APIRouter(prefix="/quiz", tags=["quiz"])
+deep_dive_router = APIRouter(prefix="/deep-dive", tags=["deep-dive"])
 payment_router = APIRouter(prefix="/payment", tags=["payment"])
 admin_router = APIRouter(prefix="/admin", tags=["admin"])
 report_router = APIRouter(prefix="/report", tags=["report"])
 share_router = APIRouter(prefix="/share", tags=["share"])
 couples_router = APIRouter(prefix="/couples", tags=["couples"])
 email_router = APIRouter(prefix="/email", tags=["email"])
+analytics_router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -89,6 +177,7 @@ class UserResponse(BaseModel):
     name: str
     language: str
     is_admin: bool = False
+    tier: str = "free"
     created_at: datetime
 
 class TokenResponse(BaseModel):
@@ -135,6 +224,82 @@ class QuestionCreate(BaseModel):
     stress_marker_flag: bool = False
     active: bool = True
     order: int = 0
+
+class QuestionBulkCreate(BaseModel):
+    series: str
+    questions: List[Dict[str, Any]]
+
+class PricingCreate(BaseModel):
+    product_id: str
+    name_id: str
+    name_en: str
+    description_id: str = ""
+    description_en: str = ""
+    price_idr: float
+    price_usd: float
+    features_id: List[str] = []
+    features_en: List[str] = []
+    active: bool = True
+    is_popular: bool = False
+
+class CouponCreateAdvanced(BaseModel):
+    code: str
+    discount_type: str = "percent"  # percent, fixed_idr, fixed_usd
+    discount_value: float
+    max_uses: int = 100
+    min_purchase_idr: float = 0
+    valid_products: List[str] = []  # empty = all products
+    valid_from: Optional[str] = None
+    valid_until: Optional[str] = None
+    one_per_user: bool = True
+    active: bool = True
+
+class QuestionOptionSchema(BaseModel):
+    text_id: str
+    text_en: str
+    archetype: str
+    weight: int = 1
+
+# ==================== ELITE TIER MODELS ====================
+
+class EliteReportRequest(BaseModel):
+    result_id: str
+    language: str = "id"
+    force: bool = False
+    # Elite-specific inputs
+    child_age_range: Optional[str] = None  # early_childhood, school_age, teen, young_adult
+    relationship_challenges: Optional[str] = None
+    user_role: Optional[str] = None  # founder, leader, partner
+    counterpart_style: Optional[str] = None
+    business_conflicts: Optional[str] = None
+    team_profiles: Optional[List[Dict[str, Any]]] = None
+    previous_snapshot: Optional[Dict[str, Any]] = None
+    self_reported_experience: Optional[str] = None
+
+class EliteModuleConfig(BaseModel):
+    quarterly_calibration: bool = False
+    parent_child: bool = False
+    business_leadership: bool = False
+    team_dynamics: bool = False
+
+class ElitePlusReportRequest(BaseModel):
+    result_id: str
+    language: str = "id"
+    force: bool = False
+    # Elite modules (inherited)
+    child_age_range: Optional[str] = None
+    relationship_challenges: Optional[str] = None
+    user_role: Optional[str] = None
+    counterpart_style: Optional[str] = None
+    business_conflicts: Optional[str] = None
+    team_profiles: Optional[List[Dict[str, Any]]] = None
+    previous_snapshot: Optional[Dict[str, Any]] = None
+    self_reported_experience: Optional[str] = None
+    # Elite+ specific
+    certification_level: Optional[int] = None  # 1-4
+    include_certification: bool = False
+    include_coaching_model: bool = False
+    include_governance_dashboard: bool = False
 
 # ==================== HELPER FUNCTIONS ====================
 
@@ -196,6 +361,7 @@ async def register(data: UserCreate):
         name=data.name,
         language=data.language,
         is_admin=False,
+        tier="free",
         created_at=datetime.fromisoformat(user_doc["created_at"])
     )
     return TokenResponse(access_token=token, user=user_response)
@@ -213,6 +379,7 @@ async def login(data: UserLogin):
         name=user["name"],
         language=user.get("language", "id"),
         is_admin=user.get("is_admin", False),
+        tier=user.get("tier", "free"),
         created_at=datetime.fromisoformat(user["created_at"]) if isinstance(user["created_at"], str) else user["created_at"]
     )
     return TokenResponse(access_token=token, user=user_response)
@@ -225,6 +392,7 @@ async def get_me(user=Depends(get_current_user)):
         name=user["name"],
         language=user.get("language", "id"),
         is_admin=user.get("is_admin", False),
+        tier=user.get("tier", "free"),
         created_at=datetime.fromisoformat(user["created_at"]) if isinstance(user["created_at"], str) else user["created_at"]
     )
 
@@ -774,10 +942,21 @@ async def get_archetype(archetype: str, language: str = "id"):
 
 PRODUCTS = {
     "single_report": {"price_idr": 99000, "price_usd": 6.99, "name_id": "Laporan Lengkap", "name_en": "Full Report"},
+    "deep_dive": {"price_idr": 149000, "price_usd": 9.99, "name_id": "Analisis Mendalam", "name_en": "Deep Dive Analysis"},
     "family_pack": {"price_idr": 349000, "price_usd": 24.99, "name_id": "Paket Keluarga (6 orang)", "name_en": "Family Pack (6 people)"},
     "team_pack": {"price_idr": 499000, "price_usd": 34.99, "name_id": "Paket Tim (10 orang)", "name_en": "Team Pack (10 people)"},
     "couples_pack": {"price_idr": 149000, "price_usd": 9.99, "name_id": "Paket Pasangan", "name_en": "Couples Pack"},
-    "subscription": {"price_idr": 199000, "price_usd": 14.99, "name_id": "Langganan Bulanan", "name_en": "Monthly Subscription"}
+    "subscription": {"price_idr": 199000, "price_usd": 14.99, "name_id": "Langganan Bulanan", "name_en": "Monthly Subscription"},
+    # Elite Tier Products
+    "elite_monthly": {"price_idr": 499000, "price_usd": 34.99, "name_id": "Elite Bulanan", "name_en": "Elite Monthly", "tier": "elite"},
+    "elite_quarterly": {"price_idr": 1299000, "price_usd": 89.99, "name_id": "Elite 3 Bulan", "name_en": "Elite Quarterly", "tier": "elite"},
+    "elite_annual": {"price_idr": 3999000, "price_usd": 279.99, "name_id": "Elite Tahunan", "name_en": "Elite Annual", "tier": "elite"},
+    "elite_single": {"price_idr": 299000, "price_usd": 19.99, "name_id": "Laporan Elite (1x)", "name_en": "Elite Report (1x)", "tier": "elite"},
+    # Elite+ (Certification) Tier Products
+    "elite_plus_monthly": {"price_idr": 999000, "price_usd": 69.99, "name_id": "Elite+ Bulanan", "name_en": "Elite+ Monthly", "tier": "elite_plus"},
+    "elite_plus_quarterly": {"price_idr": 2499000, "price_usd": 169.99, "name_id": "Elite+ 3 Bulan", "name_en": "Elite+ Quarterly", "tier": "elite_plus"},
+    "elite_plus_annual": {"price_idr": 7999000, "price_usd": 549.99, "name_id": "Elite+ Tahunan", "name_en": "Elite+ Annual", "tier": "elite_plus"},
+    "certification_program": {"price_idr": 4999000, "price_usd": 349.99, "name_id": "Program Sertifikasi RI", "name_en": "RI Certification Program", "tier": "elite_plus"}
 }
 
 @payment_router.get("/products")
@@ -785,70 +964,206 @@ async def get_products():
     """Get available products"""
     return {"products": PRODUCTS}
 
+@payment_router.get("/client-key")
+async def get_midtrans_client_key():
+    """Get Midtrans client key for frontend"""
+    return {
+        "client_key": MIDTRANS_CLIENT_KEY,
+        "is_production": MIDTRANS_IS_PRODUCTION
+    }
+
 @payment_router.post("/create")
 async def create_payment(data: PaymentCreate, user=Depends(get_current_user)):
-    """Create a payment session"""
+    """Create a Midtrans payment session"""
     product = PRODUCTS.get(data.product_type)
     if not product:
         raise HTTPException(status_code=400, detail="Invalid product type")
     
     amount = product["price_idr"] if data.currency == "IDR" else product["price_usd"]
-    payment_id = f"pay_{uuid.uuid4().hex[:12]}"
+    payment_id = f"PAY-{uuid.uuid4().hex[:12].upper()}"
     
-    # Create payment record
-    payment = {
-        "payment_id": payment_id,
-        "user_id": user["user_id"],
-        "result_id": data.result_id,
-        "product_type": data.product_type,
-        "amount": amount,
-        "currency": data.currency,
-        "status": "pending",
-        "created_at": datetime.now(timezone.utc).isoformat()
-    }
-    await db.payments.insert_one(payment)
+    # Get user details for Midtrans
+    user_data = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
     
-    # For demo, return mock payment URL
-    # In production, integrate with Xendit API
-    return {
-        "payment_id": payment_id,
-        "payment_url": f"/checkout/{payment_id}",
-        "amount": amount,
-        "currency": data.currency
-    }
+    try:
+        # Create Midtrans transaction
+        transaction_params = {
+            "transaction_details": {
+                "order_id": payment_id,
+                "gross_amount": int(amount)
+            },
+            "customer_details": {
+                "email": user_data.get("email", "customer@email.com"),
+                "first_name": user_data.get("name", "Customer").split()[0] if user_data.get("name") else "Customer",
+                "last_name": " ".join(user_data.get("name", "").split()[1:]) if user_data.get("name") and len(user_data.get("name", "").split()) > 1 else "",
+            },
+            "item_details": [{
+                "id": data.product_type,
+                "price": int(amount),
+                "quantity": 1,
+                "name": product["name_id"],
+                "category": "Digital Product"
+            }],
+            "credit_card": {
+                "secure": True
+            },
+            "callbacks": {
+                "finish": f"{os.environ.get('APP_URL', 'https://relasi4warna.com')}/payment/finish?order_id={payment_id}"
+            },
+            "custom_field1": data.result_id,
+            "custom_field2": user["user_id"],
+            "custom_field3": data.product_type
+        }
+        
+        # Create Snap transaction
+        snap_response = midtrans_snap.create_transaction(transaction_params)
+        
+        # Create payment record
+        payment = {
+            "payment_id": payment_id,
+            "user_id": user["user_id"],
+            "result_id": data.result_id,
+            "product_type": data.product_type,
+            "amount": amount,
+            "currency": data.currency,
+            "status": "pending",
+            "snap_token": snap_response.get("token"),
+            "redirect_url": snap_response.get("redirect_url"),
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.payments.insert_one(payment)
+        
+        return {
+            "payment_id": payment_id,
+            "snap_token": snap_response.get("token"),
+            "redirect_url": snap_response.get("redirect_url"),
+            "amount": amount,
+            "currency": data.currency
+        }
+        
+    except Exception as e:
+        logger.error(f"Midtrans payment creation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create payment: {str(e)}")
 
 @payment_router.post("/webhook")
 async def payment_webhook(request: Request):
-    """Handle Xendit webhook"""
-    # Verify webhook token
-    callback_token = request.headers.get("x-callback-token")
-    if callback_token != XENDIT_WEBHOOK_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid webhook token")
-    
-    body = await request.json()
-    payment_id = body.get("external_id")
-    status = body.get("status")
-    
-    if status == "PAID":
-        # Update payment status
-        await db.payments.update_one(
-            {"payment_id": payment_id},
-            {"$set": {"status": "paid", "paid_at": datetime.now(timezone.utc).isoformat()}}
-        )
+    """Handle Midtrans webhook notification"""
+    try:
+        body = await request.json()
+        logger.info(f"Midtrans webhook received: {body}")
         
-        # Update result to paid
-        payment = await db.payments.find_one({"payment_id": payment_id}, {"_id": 0})
-        if payment:
-            await db.results.update_one(
-                {"result_id": payment["result_id"]},
-                {"$set": {"is_paid": True}}
+        # Extract transaction details
+        order_id = body.get("order_id")
+        transaction_status = body.get("transaction_status")
+        fraud_status = body.get("fraud_status")
+        payment_type = body.get("payment_type")
+        
+        # Verify signature
+        signature_key = body.get("signature_key")
+        status_code = body.get("status_code")
+        gross_amount = body.get("gross_amount")
+        
+        # Create signature for verification
+        import hashlib
+        raw_signature = f"{order_id}{status_code}{gross_amount}{MIDTRANS_SERVER_KEY}"
+        calculated_signature = hashlib.sha512(raw_signature.encode()).hexdigest()
+        
+        if signature_key != calculated_signature:
+            logger.warning(f"Invalid Midtrans signature for order {order_id}")
+            # Still process for sandbox testing
+            if MIDTRANS_IS_PRODUCTION:
+                raise HTTPException(status_code=401, detail="Invalid signature")
+        
+        # Handle transaction status
+        if transaction_status == "capture" or transaction_status == "settlement":
+            if fraud_status == "accept" or fraud_status is None:
+                # Payment successful
+                await db.payments.update_one(
+                    {"payment_id": order_id},
+                    {"$set": {
+                        "status": "paid",
+                        "payment_type": payment_type,
+                        "transaction_status": transaction_status,
+                        "paid_at": datetime.now(timezone.utc).isoformat()
+                    }}
+                )
+                
+                # Update result to paid
+                payment = await db.payments.find_one({"payment_id": order_id}, {"_id": 0})
+                if payment:
+                    await db.results.update_one(
+                        {"result_id": payment["result_id"]},
+                        {"$set": {"is_paid": True}}
+                    )
+                    logger.info(f"Payment {order_id} marked as paid, result {payment['result_id']} unlocked")
+                    
+        elif transaction_status == "pending":
+            await db.payments.update_one(
+                {"payment_id": order_id},
+                {"$set": {
+                    "status": "pending",
+                    "payment_type": payment_type,
+                    "transaction_status": transaction_status
+                }}
             )
+            
+        elif transaction_status in ["deny", "cancel", "expire"]:
+            await db.payments.update_one(
+                {"payment_id": order_id},
+                {"$set": {
+                    "status": transaction_status,
+                    "payment_type": payment_type,
+                    "transaction_status": transaction_status
+                }}
+            )
+        
+        return {"status": "received"}
+        
+    except Exception as e:
+        logger.error(f"Midtrans webhook error: {e}")
+        return {"status": "error", "message": str(e)}
+
+@payment_router.get("/status/{payment_id}")
+async def get_payment_status(payment_id: str, user=Depends(get_current_user)):
+    """Get payment status from database and optionally refresh from Midtrans"""
+    payment = await db.payments.find_one(
+        {"payment_id": payment_id, "user_id": user["user_id"]},
+        {"_id": 0}
+    )
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
     
-    return {"status": "received"}
+    # If still pending, check with Midtrans
+    if payment.get("status") == "pending":
+        try:
+            status_response = midtrans_snap.transactions.status(payment_id)
+            transaction_status = status_response.get("transaction_status")
+            
+            if transaction_status in ["capture", "settlement"]:
+                await db.payments.update_one(
+                    {"payment_id": payment_id},
+                    {"$set": {
+                        "status": "paid",
+                        "transaction_status": transaction_status,
+                        "paid_at": datetime.now(timezone.utc).isoformat()
+                    }}
+                )
+                
+                await db.results.update_one(
+                    {"result_id": payment["result_id"]},
+                    {"$set": {"is_paid": True}}
+                )
+                
+                payment["status"] = "paid"
+                
+        except Exception as e:
+            logger.warning(f"Could not check Midtrans status: {e}")
+    
+    return payment
 
 @payment_router.post("/simulate-payment/{payment_id}")
 async def simulate_payment(payment_id: str, user=Depends(get_current_user)):
-    """Simulate successful payment for demo"""
+    """Simulate successful payment for sandbox testing"""
     payment = await db.payments.find_one({"payment_id": payment_id, "user_id": user["user_id"]}, {"_id": 0})
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
@@ -856,7 +1171,12 @@ async def simulate_payment(payment_id: str, user=Depends(get_current_user)):
     # Update payment status
     await db.payments.update_one(
         {"payment_id": payment_id},
-        {"$set": {"status": "paid", "paid_at": datetime.now(timezone.utc).isoformat()}}
+        {"$set": {
+            "status": "paid",
+            "payment_type": "simulation",
+            "transaction_status": "settlement",
+            "paid_at": datetime.now(timezone.utc).isoformat()
+        }}
     )
     
     # Update result to paid
@@ -870,7 +1190,7 @@ async def simulate_payment(payment_id: str, user=Depends(get_current_user)):
 # ==================== REPORT ROUTES ====================
 
 @report_router.post("/generate/{result_id}")
-async def generate_report(result_id: str, language: str = "id", user=Depends(get_current_user)):
+async def generate_report(result_id: str, language: str = "id", force: bool = False, user=Depends(get_current_user)):
     """Generate AI-powered premium relationship intelligence report"""
     result = await db.results.find_one(
         {"result_id": result_id, "user_id": user["user_id"]},
@@ -882,13 +1202,14 @@ async def generate_report(result_id: str, language: str = "id", user=Depends(get
     if not result.get("is_paid", False):
         raise HTTPException(status_code=402, detail="Payment required for detailed report")
     
-    # Check if report already exists
-    existing_report = await db.reports.find_one(
-        {"result_id": result_id, "language": language},
-        {"_id": 0}
-    )
-    if existing_report:
-        return existing_report
+    # Check if report already exists (skip if force=True)
+    if not force:
+        existing_report = await db.reports.find_one(
+            {"result_id": result_id, "language": language},
+            {"_id": 0}
+        )
+        if existing_report:
+            return existing_report
     
     # Generate report using AI
     primary = result["primary_archetype"]
@@ -918,202 +1239,297 @@ async def generate_report(result_id: str, language: str = "id", user=Depends(get
     series_name = series_names.get(series, {}).get("en", series.title())
     
     # Comprehensive system prompt for Relationship Intelligence
-    system_prompt = """You are an advanced Human Relationship Intelligence system,
-combining expertise from:
-- Relationship coaching
-- Conflict resolution
-- Behavioral pattern analysis
-- Communication strategy
-- Emotional regulation
-- Adult relational maturity development
+    # PREMIUM PERSONALITY INTELLIGENCE ENGINE - ISO-STYLE GOVERNANCE
+    system_prompt = """You are a PREMIUM PERSONALITY INTELLIGENCE ENGINE
+operating under STRICT ISO-STYLE GOVERNANCE.
 
-Your mission is NOT to label people,
-but to help humans understand themselves,
-regulate their emotions,
-and build healthy, sustainable relationships
-in an era of increasing individualism and digital isolation.
+You must comply with:
+- AI Governance & Human-in-the-Loop Policy
+- Annex A (HITL thresholds & sampling)
+- Annex B (Prohibited terms & content)
+- Annex C (Moderator checklist)
 
 ====================================================
-ABSOLUTE ETHICAL, LEGAL & IP CONSTRAINTS (MANDATORY)
+CORE ROLE & BOUNDARIES
 ====================================================
-1. All content MUST be 100% original and proprietary.
-2. Do NOT reference any books, authors, DISC, MBTI, or third-party frameworks.
-3. Do NOT provide medical, psychological, or clinical diagnoses.
-4. Position this system strictly as:
-   - self-reflection
-   - communication awareness
-   - relational maturity development
-5. Do NOT promise outcomes or "fix people".
-6. Language must be compassionate, respectful, and non-judgmental.
-7. The system must empower personal responsibility, not blame others.
-8. All outputs must be globally monetizable and safe for public distribution.
+Your role is to help a PAYING USER:
+1) Understand themselves deeply (reflective, not diagnostic)
+2) Understand how their tendencies affect relationships
+3) Learn how to relate safely and effectively with different personality types
+4) Receive a concrete, ethical, non-manipulative self-improvement plan
+
+ABSOLUTE LIMITS:
+- Do NOT diagnose psychological or medical conditions
+- Do NOT label people as "toxic", "narcissistic", etc.
+- Do NOT judge or shame
+- Do NOT provide control, domination, or manipulation tactics
+- Do NOT encourage cutting off relationships as a default
+- Do NOT present traits as fixed or permanent
 
 ====================================================
-CORE PRODUCT POSITIONING
+INTERNAL PROPRIETARY FRAMEWORK
 ====================================================
-Product Type:
-- Premium Relationship Intelligence Assessment & Guidance Platform
+4 Human Communication Drives (use these names consistently):
+A) Driver – acts through direction and decisiveness
+B) Spark – acts through expression and connection
+C) Anchor – acts through stability and harmony
+D) Analyst – acts through structure and accuracy
 
-Core Philosophy:
-"People are not broken.
-They are often unheard, unregulated, and misunderstood."
+====================================================
+LANGUAGE & STYLE REQUIREMENTS
+====================================================
+- Professional
+- Calm
+- Warm
+- Mentor-like
+- Never clinical
+- Never absolute
+- Never manipulative
+- Use probabilistic language ("tends to", "often", "in certain situations")
+- Frame traits as patterns, not identity
+- Focus on self-regulation and awareness"""
 
-Internal Proprietary Framework:
-- 4 Human Communication Drives
-  (use these names consistently, no external references):
-  A) Driver – acts through direction and decisiveness
-  B) Spark – acts through expression and connection
-  C) Anchor – acts through stability and harmony
-  D) Analyst – acts through structure and accuracy"""
-
-    # User prompt with structured input
+    # User prompt with structured input - 7 MANDATORY SECTIONS
+    stress_flag_str = "true" if stress_flag else "false"
     user_prompt = f"""
 ====================================================
-INPUT DATA
+INPUTS
 ====================================================
-{{
-  "language": "{language}",
-  "series": "{series_name}",
-  "primary_drive": "{primary_name}",
-  "secondary_drive": "{secondary_name}",
-  "scores": {{
-    "Driver": {scores.get("driver", 0)},
-    "Spark": {scores.get("spark", 0)},
-    "Anchor": {scores.get("anchor", 0)},
-    "Analyst": {scores.get("analyst", 0)}
-  }},
-  "stress_flag": {str(stress_flag).lower()},
-  "balance_index": {balance_index}
-}}
+- personality_profile:
+  - dominant_style: {primary_name}
+  - secondary_style: {secondary_name}
+  - score_distribution: Driver={scores.get("driver", 0)}, Spark={scores.get("spark", 0)}, Anchor={scores.get("anchor", 0)}, Analyst={scores.get("analyst", 0)}
+- stress_profile:
+  - stress_markers_count: {result.get("stress_markers_count", 0)}
+  - stress_flag: {stress_flag_str}
+- context:
+  - relationship_focus: {series_name}
+  - balance_index: {balance_index}
+- language: {language}
+- user_is_paid: true
 
 ====================================================
 LANGUAGE REQUIREMENT
 ====================================================
 Output language: {"Indonesian (Bahasa Indonesia)" if language == "id" else "English"}
 Write the ENTIRE report in {"Indonesian" if language == "id" else "English"}.
+Use markdown formatting with ## headings.
 
 ====================================================
-CORE TASK — PREMIUM DEEP RELATIONSHIP REPORT
+OUTPUT STRUCTURE (MANDATORY - 7 SECTIONS)
 ====================================================
-Generate a DEEP, PERSONALIZED, TRANSFORMATIVE report
-that genuinely helps the user navigate human relationships.
-
-The report MUST include ALL sections below,
-with concrete, practical, and emotionally intelligent guidance.
-Format in Markdown with clear headings (##).
 
 ----------------------------------------------------
-SECTION 1 — PERSONAL RELATIONAL DNA
+## SECTION 1 — EXECUTIVE SELF SNAPSHOT
 ----------------------------------------------------
-Explain how the user's primary ({primary_name}) and secondary ({secondary_name}) drives shape:
-- how they speak
-- how they listen
-- how they decide
-- how they react under pressure
+Explain the user's personality tendencies ({primary_name} primary, {secondary_name} secondary) in clear, professional language.
 
-Write in a way that feels like:
-"Someone finally understands me."
+Rules:
+- Use probabilistic language ("tends to", "often", "in certain situations")
+- Emphasize strengths BEFORE challenges
+- Frame traits as patterns, not identity
 
-----------------------------------------------------
-SECTION 2 — INNER CONFLICT MAP
-----------------------------------------------------
-Identify:
-- the core inner tension they carry
-- what they deeply need but rarely express
-- what they fear losing in relationships
-- how this creates repeated conflict patterns
-
-Avoid blaming language.
-Focus on awareness and responsibility.
+Include:
+- Core strengths
+- Natural motivations
+- Situations where these traits shine
 
 ----------------------------------------------------
-SECTION 3 — EMOTIONAL TRIGGERS & ESCALATION PATTERN
+## SECTION 2 — RELATIONAL IMPACT MAP
 ----------------------------------------------------
-Describe clearly:
-- what typically triggers them
-- how their emotions escalate step by step
-- early warning signs before conflict explodes
-- how their reaction unintentionally affects others
+Explain how these tendencies may be EXPERIENCED by others in {series_name} context.
+
+Cover:
+- How the user may unintentionally impact:
+  - emotional safety
+  - communication flow
+  - decision-making dynamics
+
+Important:
+- No blaming
+- No assumptions of intent
+- Use perspective-taking language
 
 ----------------------------------------------------
-SECTION 4 — SELF-REGULATION & EMOTIONAL STABILITY GUIDE
+## SECTION 3 — STRESS & BLIND SPOT AWARENESS
 ----------------------------------------------------
-Provide a PERSONALIZED regulation guide:
-- what to do immediately when emotions rise
-- what to avoid saying or doing
-- grounding actions aligned with their drive
-- how to pause without suppressing feelings
+Explain what happens under pressure.
 
-This section must feel practical and usable in real life.
+Include:
+- Common stress responses for {primary_name}-{secondary_name} profile
+- Early warning signs the user can notice in themselves
+- Why others might misinterpret these reactions
 
-----------------------------------------------------
-SECTION 5 — INTERACTION STRATEGY WITH DIFFERENT DRIVES
-----------------------------------------------------
-For EACH of the other three drives, provide:
-- how to communicate safely
-- what tone works best
-- phrases to USE (real scripts)
-- phrases to AVOID
-- how to set boundaries without damaging the relationship
-
-This section is CRITICAL for real-world value.
+{"Add a gentle safety note encouraging pause and self-regulation, as stress indicators were detected." if stress_flag else ""}
 
 ----------------------------------------------------
-SECTION 6 — CONFLICT RECOVERY & REPAIR SYSTEM
+## SECTION 4 — HOW TO RELATE WITH OTHER PERSONALITY STYLES
 ----------------------------------------------------
-Guide the user through:
-- how to take responsibility without self-blame
-- how to apologize effectively in their style
-- how to repair trust after emotional damage
-- how to prevent the same conflict from repeating
+For EACH major personality style (Driver, Spark, Anchor, Analyst), provide a short, practical guide:
+
+For each style:
+- What they typically value
+- What helps communication
+- What often creates friction
+- One DO
+- One AVOID
+
+Rules:
+- No stereotyping
+- No absolute statements
+- Focus on mutual respect and clarity
+- Specific to {series_name} relationships
 
 ----------------------------------------------------
-SECTION 7 — PERSONAL GROWTH PATH (3 LEVELS)
+## SECTION 5 — PERSONAL GROWTH & CALIBRATION PLAN
 ----------------------------------------------------
-Define a clear growth journey:
-Level 1: Awareness (recognizing patterns)
-Level 2: Regulation (choosing healthier responses)
-Level 3: Relational Maturity (building safe connection)
+Provide a SELF-IMPROVEMENT plan focused on SKILLS, not personality change.
 
-Include realistic expectations and encouragement.
+Include:
+- 3 key growth skills to practice
+- Concrete behavioral adjustments (specific but gentle)
+- Reflection prompts (questions the user can ask themselves)
+- One weekly micro-habit
 
-----------------------------------------------------
-SECTION 8 — 14-DAY RELATIONSHIP PRACTICE PLAN
-----------------------------------------------------
-Create a gentle but structured plan:
-- daily micro-actions
-- reflection prompts
-- communication experiments
-- boundary-setting exercises
+Rules:
+- Never imply the user is "broken"
+- Frame growth as calibration, not correction
 
 ----------------------------------------------------
-SECTION 9 — CLOSING REFLECTION
+## SECTION 6 — RELATIONSHIP REPAIR & PREVENTION TOOLS
 ----------------------------------------------------
-End with a humane, grounding message such as:
-"Healthy relationships are not about perfect people,
-but about regulated hearts and honest communication."
+Provide:
+- 2 example phrases the user can USE (de-escalating)
+- 2 phrases to AVOID (why they escalate)
+- A simple repair script after conflict
+- A boundary-setting example that is respectful
+
+----------------------------------------------------
+## SECTION 7 — ETHICAL SAFETY CLOSING
+----------------------------------------------------
+End with a short grounding reminder:
+
+- Personality is contextual and learnable
+- Growth happens over time
+- If emotions feel overwhelming, human support is valid
 
 ====================================================
-STYLE REQUIREMENTS
+FINAL CHECK BEFORE OUTPUT
 ====================================================
-- Warm, pastoral, grounded tone
-- Clear headings with ## for main sections
-- Real examples and scenarios specific to {series_name} context
-- Script-based guidance (not theory)
-- No shaming, no labeling
-- Focus on the {series_name} relationship context throughout
+Before delivering:
+- Confirm no prohibited terms appear
+- Confirm no diagnosis or labeling
+- Confirm guidance empowers self-regulation
+- Confirm alignment with Annex A–C
 
-Now generate the complete PREMIUM RELATIONSHIP INTELLIGENCE REPORT.
+DELIVER THE FULL PREMIUM REPORT NOW.
 """
     
     try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"report_{result_id}",
-            system_message=system_prompt
-        ).with_model("openai", "gpt-5.2")
+        # Step 1: Pre-generation risk assessment (user context)
+        pre_assessment_input = RiskAssessmentInput(
+            user_id=user["user_id"],
+            result_id=result_id,
+            series=series,
+            stress_flag=stress_flag,
+            stress_markers_count=result.get("stress_markers_count", 0),
+            user_context=None,  # No user context in standard report generation
+            ai_output=None,
+            language=language
+        )
+        pre_assessment = await hitl_engine.assess_risk(pre_assessment_input)
         
-        report_content = await chat.send_message(UserMessage(text=user_prompt))
+        # If Level 3 due to stress signals, return safe response immediately
+        if pre_assessment.risk_level == RiskLevel.LEVEL_3:
+            logger.warning(f"Pre-generation HITL Level 3 for result {result_id}")
+            safe_response = hitl_engine.get_safe_response(language)
+            
+            # Create queue item for review
+            await hitl_engine.create_moderation_queue_item(
+                pre_assessment_input,
+                pre_assessment,
+                "Report generation blocked - high risk signals detected before generation"
+            )
+            
+            report_id = f"report_{uuid.uuid4().hex[:12]}"
+            report = {
+                "report_id": report_id,
+                "result_id": result_id,
+                "user_id": user["user_id"],
+                "language": language,
+                "content": safe_response,
+                "hitl_status": "blocked",
+                "hitl_assessment_id": pre_assessment.assessment_id,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+            await db.reports.insert_one(report)
+            report.pop("_id", None)
+            return report
+        
+        # Step 2: Generate AI report with model fallback
+        try:
+            chat = LlmChat(
+                api_key=EMERGENT_LLM_KEY,
+                session_id=f"report_{result_id}",
+                system_message=system_prompt
+            ).with_model("openai", "gpt-5.2")
+            
+            report_content = await chat.send_message(UserMessage(text=user_prompt))
+        except Exception as model_error:
+            logger.warning(f"GPT-5.2 failed, falling back to GPT-4o: {model_error}")
+            chat = LlmChat(
+                api_key=EMERGENT_LLM_KEY,
+                session_id=f"report_{result_id}_fallback",
+                system_message=system_prompt
+            ).with_model("openai", "gpt-4o")
+            
+            report_content = await chat.send_message(UserMessage(text=user_prompt))
+        
+        # Step 3: Post-generation risk assessment (AI output)
+        post_assessment_input = RiskAssessmentInput(
+            user_id=user["user_id"],
+            result_id=result_id,
+            series=series,
+            stress_flag=stress_flag,
+            stress_markers_count=result.get("stress_markers_count", 0),
+            user_context=None,
+            ai_output=report_content,
+            language=language
+        )
+        post_assessment = await hitl_engine.assess_risk(post_assessment_input)
+        
+        # Step 4: Process based on HITL level
+        hitl_status = "approved"
+        final_content = report_content
+        
+        if post_assessment.risk_level == RiskLevel.LEVEL_3:
+            # Hold for human review
+            queue_id = await hitl_engine.create_moderation_queue_item(
+                post_assessment_input,
+                post_assessment,
+                report_content
+            )
+            
+            # Return safe response while pending review
+            final_content = hitl_engine.get_safe_response(language)
+            hitl_status = "pending_review"
+            logger.info(f"Report {result_id} held for review: {queue_id}")
+            
+        elif post_assessment.risk_level == RiskLevel.LEVEL_2:
+            # Add safety buffer
+            final_content, _ = process_ai_output_with_hitl(
+                report_content, post_assessment, language
+            )
+            hitl_status = "approved_with_buffer"
+            
+            # Check if sampled for review
+            if post_assessment.requires_human_review:
+                await hitl_engine.create_moderation_queue_item(
+                    post_assessment_input,
+                    post_assessment,
+                    report_content
+                )
+                logger.info(f"Report {result_id} sampled for review (Level 2)")
         
         # Save report
         report_id = f"report_{uuid.uuid4().hex[:12]}"
@@ -1122,14 +1538,30 @@ Now generate the complete PREMIUM RELATIONSHIP INTELLIGENCE REPORT.
             "result_id": result_id,
             "user_id": user["user_id"],
             "language": language,
-            "content": report_content,
+            "content": final_content,
+            "original_content": report_content if hitl_status != "approved" else None,
+            "hitl_status": hitl_status,
+            "hitl_assessment_id": post_assessment.assessment_id,
+            "hitl_risk_level": post_assessment.risk_level.value,
+            "hitl_risk_score": post_assessment.risk_score,
             "created_at": datetime.now(timezone.utc).isoformat()
         }
-        await db.reports.insert_one(report)
         
-        # Return without MongoDB _id
+        # Use upsert when force=true, otherwise insert
+        if force:
+            await db.reports.replace_one(
+                {"result_id": result_id, "language": language},
+                report,
+                upsert=True
+            )
+        else:
+            await db.reports.insert_one(report)
+        
+        # Return without MongoDB _id and original_content for security
         report.pop("_id", None)
+        report.pop("original_content", None)
         return report
+        
     except Exception as e:
         logger.error(f"Error generating report: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate report")
@@ -2377,6 +2809,751 @@ async def download_preview_pdf(result_id: str, language: str = "id", user=Depend
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
+# ==================== ELITE TIER REPORT ====================
+
+@report_router.post("/elite/{result_id}")
+async def generate_elite_report(
+    result_id: str,
+    request: EliteReportRequest,
+    user=Depends(get_current_user)
+):
+    """
+    Generate ELITE Tier Premium Report with additional modules.
+    Requires: user_is_paid = true AND tier = "elite"
+    """
+    # Validate result ownership
+    result = await db.results.find_one(
+        {"result_id": result_id, "user_id": user["user_id"]},
+        {"_id": 0}
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Result not found")
+    
+    # Check tier eligibility
+    user_tier = user.get("tier", "free")
+    is_paid = result.get("is_paid", False)
+    
+    if not is_paid:
+        raise HTTPException(status_code=402, detail="Payment required for Elite report")
+    
+    if user_tier != "elite":
+        raise HTTPException(status_code=403, detail="Elite tier subscription required. Upgrade to access advanced modules.")
+    
+    language = request.language
+    
+    # Check for existing elite report (unless force)
+    if not request.force:
+        existing = await db.elite_reports.find_one(
+            {"result_id": result_id, "language": language},
+            {"_id": 0}
+        )
+        if existing:
+            return existing
+    
+    # Build Elite report content
+    primary = result["primary_archetype"]
+    secondary = result["secondary_archetype"]
+    series = result["series"]
+    scores = result["scores"]
+    stress_flag = result.get("stress_flag", False)
+    stress_markers = result.get("stress_markers_count", 0)
+    
+    drive_names = {
+        "driver": {"id": "Penggerak", "en": "Driver"},
+        "spark": {"id": "Percikan", "en": "Spark"},
+        "anchor": {"id": "Jangkar", "en": "Anchor"},
+        "analyst": {"id": "Analis", "en": "Analyst"}
+    }
+    
+    primary_name = drive_names[primary][language]
+    secondary_name = drive_names[secondary][language]
+    
+    # ELITE SYSTEM PROMPT
+    elite_system_prompt = f"""You are a PREMIUM PERSONALITY INTELLIGENCE ENGINE (ELITE TIER)
+operating under STRICT ISO-STYLE GOVERNANCE with ELITE MODULE ACTIVATION.
+
+====================================================
+ELITE TIER ACTIVATION CONFIRMED
+====================================================
+- user_is_paid: true
+- tier: elite
+- All elite modules activated
+
+You must strictly comply with:
+- AI Governance & HITL Policy
+- Annex A (Risk Thresholds)
+- Annex B (Prohibited Terms)
+- Annex C (Moderator Checklist)
+- Premium Extension Rules
+
+====================================================
+ABSOLUTE LIMITS (ELITE ENHANCED)
+====================================================
+- Do NOT diagnose psychological or medical conditions
+- Do NOT label people as "toxic", "narcissistic", etc.
+- Do NOT judge or shame parenting styles as "good/bad"
+- Do NOT provide manipulation or dominance tactics
+- Do NOT pathologize children
+- No "regression" language in growth discussions
+- No fixed-trait framing
+- Growth is non-linear
+
+====================================================
+INTERNAL PROPRIETARY FRAMEWORK
+====================================================
+4 Human Communication Drives:
+A) Driver/Penggerak – direction and decisiveness
+B) Spark/Percikan – expression and connection
+C) Anchor/Jangkar – stability and harmony
+D) Analyst/Analis – structure and accuracy
+
+====================================================
+LANGUAGE & STYLE REQUIREMENTS
+====================================================
+- Language: {"Indonesian (Bahasa Indonesia)" if language == "id" else "English"}
+- Professional, Calm, Warm, Mentor-like
+- Developmentally aware (for parent-child)
+- Ethically mature (for business)
+- Never clinical, Never absolute, Never manipulative
+- Use markdown formatting with ## headings"""
+
+    # Build ELITE USER PROMPT with all modules
+    elite_modules = []
+    
+    # Module 10: Quarterly Re-calibration
+    if request.previous_snapshot:
+        prev = request.previous_snapshot
+        elite_modules.append(f"""
+## SECTION 10 — QUARTERLY PERSONAL RE-CALIBRATION
+
+Previous Snapshot:
+- Previous Primary: {prev.get('primary_archetype', 'N/A')}
+- Previous Secondary: {prev.get('secondary_archetype', 'N/A')}
+- Previous Balance Index: {prev.get('balance_index', 'N/A')}
+- Assessment Date: {prev.get('created_at', 'N/A')}
+
+Current Results:
+- Current Primary: {primary_name}
+- Current Secondary: {secondary_name}
+- Current Balance Index: {result.get('balance_index', 'N/A')}
+
+Self-Reported Experience: {request.self_reported_experience or 'Not provided'}
+
+Generate:
+10.1 What Has Stabilized - Skills becoming consistent
+10.2 What Is Still Reactive - Patterns under pressure (neutral, compassionate)
+10.3 Growth Signals - Behavioral indicators, internal shifts
+10.4 Next-Quarter Focus - 1-2 skills, one habit to continue, one to reduce
+
+Rules: No regression language, growth is non-linear""")
+    
+    # Module 11: Parent-Child
+    if request.child_age_range:
+        age_labels = {
+            "early_childhood": "Early Childhood (0-5 years)",
+            "school_age": "School Age (6-12 years)",
+            "teen": "Teenager (13-17 years)",
+            "young_adult": "Young Adult (18-25 years)"
+        }
+        elite_modules.append(f"""
+## SECTION 11 — PARENT–CHILD RELATIONSHIP DYNAMICS
+
+Parent Profile: {primary_name} (primary) with {secondary_name} (secondary)
+Child Age Range: {age_labels.get(request.child_age_range, request.child_age_range)}
+Relationship Challenges: {request.relationship_challenges or 'Not specified'}
+
+Generate:
+11.1 How the Parent's Tendencies Are Felt by the Child
+11.2 What the Child Likely Needs at This Stage (developmentally aware)
+11.3 Common Misalignments (intent vs impact)
+11.4 Emotionally Safe Responses (3-4 examples with scripts)
+11.5 One Repair Ritual (simple & age-appropriate)
+
+Rules: No pathologizing child, no good/bad parenting labels, focus on attunement""")
+    
+    # Module 12: Business & Leadership
+    if request.user_role:
+        role_labels = {
+            "founder": "Founder / Entrepreneur",
+            "leader": "Team Leader / Manager",
+            "partner": "Business Partner"
+        }
+        counterpart = drive_names.get(request.counterpart_style, {}).get(language, request.counterpart_style) if request.counterpart_style else "Not specified"
+        elite_modules.append(f"""
+## SECTION 12 — BUSINESS & LEADERSHIP RELATIONAL INTELLIGENCE
+
+User Role: {role_labels.get(request.user_role, request.user_role)}
+User Profile: {primary_name}-{secondary_name}
+Counterpart Style: {counterpart}
+Recurring Business Conflicts: {request.business_conflicts or 'Not specified'}
+
+Generate:
+12.1 Leadership Strengths of This Profile
+12.2 Where Tension Commonly Appears in Business Contexts
+12.3 Decision-Making Friction Points
+12.4 Communication Alignment Guide (specific scripts)
+12.5 Conflict Repair Script (professional tone)
+
+Rules: No manipulation tactics, no "winning" framing, focus on alignment & clarity""")
+    
+    # Module 13: Team Dynamics
+    if request.team_profiles and len(request.team_profiles) > 0:
+        team_summary = []
+        for member in request.team_profiles[:10]:
+            team_summary.append(f"- {member.get('name', 'Member')}: {member.get('primary', 'Unknown')}")
+        elite_modules.append(f"""
+## SECTION 13 — TEAM & ORGANIZATIONAL DYNAMICS
+
+Leader Profile: {primary_name}-{secondary_name}
+Team Composition:
+{chr(10).join(team_summary)}
+
+Generate:
+13.1 Team Composition Overview - Distribution, natural advantages
+13.2 Systemic Friction Risks - Miscommunication areas, decision speed vs safety
+13.3 Team Operating Agreements - Communication norms, decision rules, feedback safety
+13.4 Leader Calibration Guide - Adapting tone & pace, what NOT to standardize
+
+Rules: No ranking individuals, no "best type", emphasize system design""")
+    
+    # Build complete user prompt
+    elite_user_prompt = f"""
+====================================================
+ELITE INPUTS
+====================================================
+- personality_profile:
+  - dominant_style: {primary_name}
+  - secondary_style: {secondary_name}
+  - score_distribution: Driver={scores.get("driver", 0)}, Spark={scores.get("spark", 0)}, Anchor={scores.get("anchor", 0)}, Analyst={scores.get("analyst", 0)}
+- stress_profile:
+  - stress_markers_count: {stress_markers}
+  - stress_flag: {str(stress_flag).lower()}
+- context:
+  - relationship_focus: {series}
+  - balance_index: {result.get('balance_index', 0)}
+- user_is_paid: true
+- tier: elite
+
+====================================================
+BASE REPORT (SECTIONS 1-7)
+====================================================
+Generate the standard 7-section Premium report first:
+
+## SECTION 1 — EXECUTIVE SELF SNAPSHOT
+## SECTION 2 — RELATIONAL IMPACT MAP
+## SECTION 3 — STRESS & BLIND SPOT AWARENESS
+## SECTION 4 — HOW TO RELATE WITH OTHER PERSONALITY STYLES
+## SECTION 5 — PERSONAL GROWTH & CALIBRATION PLAN
+## SECTION 6 — RELATIONSHIP REPAIR & PREVENTION TOOLS
+## SECTION 7 — ETHICAL SAFETY CLOSING
+
+====================================================
+ELITE MODULES (SECTIONS 10-13)
+====================================================
+{chr(10).join(elite_modules) if elite_modules else "No elite modules requested for this report."}
+
+====================================================
+ELITE CLOSING — ETHICAL & HUMAN REMINDER
+====================================================
+End the ELITE report with:
+- Reminder that personality is contextual
+- Growth requires time & compassion
+- Human support is strength, not failure
+- This platform supports maturity, not control
+
+====================================================
+FINAL VALIDATION
+====================================================
+Before delivering:
+- Re-check all prohibited terms
+- Confirm no diagnosis or labeling
+- Confirm non-manipulative guidance
+- If distress signals present, use SAFE RESPONSE
+
+DELIVER ELITE OUTPUT NOW.
+"""
+
+    # Generate using AI
+    EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY")
+    
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_KEY,
+            session_id=f"elite_{result_id}",
+            system_message=elite_system_prompt
+        ).with_model("openai", "gpt-5.2")
+        elite_content = await chat.send_message(UserMessage(text=elite_user_prompt))
+    except Exception as e:
+        logger.warning(f"GPT-5.2 failed for elite report, falling back: {e}")
+        try:
+            chat = LlmChat(
+                api_key=EMERGENT_KEY,
+                session_id=f"elite_{result_id}_fallback",
+                system_message=elite_system_prompt
+            ).with_model("openai", "gpt-4o")
+            elite_content = await chat.send_message(UserMessage(text=elite_user_prompt))
+        except Exception as e2:
+            raise HTTPException(status_code=500, detail=f"Failed to generate elite report: {e2}")
+    
+    # Apply HITL+ Enhanced checks for Elite
+    hitl_level = 1
+    hitl_flags = []
+    
+    # Elite HITL+ Rules
+    if request.child_age_range and request.user_role:
+        hitl_level = max(hitl_level, 2)
+        hitl_flags.append("multi_domain_conflict")
+    
+    if request.child_age_range in ["early_childhood", "school_age"]:
+        hitl_level = max(hitl_level, 2)
+        hitl_flags.append("power_asymmetry_present")
+    
+    if stress_flag and stress_markers >= 4:
+        hitl_level = max(hitl_level, 2)
+        hitl_flags.append("repeated_stress_patterns")
+    
+    # Check for Level 3 triggers in content
+    level3_triggers = ["coercion", "dominance", "control them", "make them", "force"]
+    content_lower = elite_content.lower()
+    for trigger in level3_triggers:
+        if trigger in content_lower:
+            hitl_level = 3
+            hitl_flags.append(f"content_trigger:{trigger}")
+            break
+    
+    hitl_status = "approved" if hitl_level == 1 else "approved_with_buffer" if hitl_level == 2 else "pending_review"
+    
+    # Save elite report
+    report_id = f"elite_{uuid.uuid4().hex[:12]}"
+    elite_report = {
+        "report_id": report_id,
+        "result_id": result_id,
+        "user_id": user["user_id"],
+        "language": language,
+        "tier": "elite",
+        "content": elite_content,
+        "modules_activated": {
+            "quarterly_calibration": request.previous_snapshot is not None,
+            "parent_child": request.child_age_range is not None,
+            "business_leadership": request.user_role is not None,
+            "team_dynamics": request.team_profiles is not None and len(request.team_profiles) > 0
+        },
+        "hitl_status": hitl_status,
+        "hitl_level": hitl_level,
+        "hitl_flags": hitl_flags,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    # Upsert report
+    await db.elite_reports.replace_one(
+        {"result_id": result_id, "language": language},
+        elite_report,
+        upsert=True
+    )
+    
+    return {
+        "report_id": report_id,
+        "result_id": result_id,
+        "tier": "elite",
+        "content": elite_content,
+        "modules_activated": elite_report["modules_activated"],
+        "hitl_status": hitl_status,
+        "hitl_level": hitl_level
+    }
+
+@report_router.get("/elite/{result_id}")
+async def get_elite_report(result_id: str, language: str = "id", user=Depends(get_current_user)):
+    """Get existing elite report"""
+    report = await db.elite_reports.find_one(
+        {"result_id": result_id, "user_id": user["user_id"], "language": language},
+        {"_id": 0}
+    )
+    if not report:
+        raise HTTPException(status_code=404, detail="Elite report not found. Generate one first.")
+    return report
+
+# ==================== ELITE+ TIER REPORT ====================
+
+@report_router.post("/elite-plus/{result_id}")
+async def generate_elite_plus_report(
+    result_id: str,
+    request: ElitePlusReportRequest,
+    user=Depends(get_current_user)
+):
+    """
+    Generate ELITE+ Tier Premium Report with certification, coaching, and governance modules.
+    Requires: user_is_paid = true AND tier = "elite_plus"
+    """
+    # Validate result ownership
+    result = await db.results.find_one(
+        {"result_id": result_id, "user_id": user["user_id"]},
+        {"_id": 0}
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Result not found")
+    
+    # Check tier eligibility
+    user_tier = user.get("tier", "free")
+    is_paid = result.get("is_paid", False)
+    
+    if not is_paid:
+        raise HTTPException(status_code=402, detail="Payment required for Elite+ report")
+    
+    if user_tier not in ["elite_plus", "certification"]:
+        raise HTTPException(status_code=403, detail="Elite+ tier subscription required. Upgrade to access certification and advanced modules.")
+    
+    language = request.language
+    
+    # Check for existing elite+ report
+    if not request.force:
+        existing = await db.elite_plus_reports.find_one(
+            {"result_id": result_id, "language": language},
+            {"_id": 0}
+        )
+        if existing:
+            return existing
+    
+    # Build Elite+ report content
+    primary = result["primary_archetype"]
+    secondary = result["secondary_archetype"]
+    series = result["series"]
+    scores = result["scores"]
+    stress_flag = result.get("stress_flag", False)
+    
+    drive_names = {
+        "driver": {"id": "Penggerak", "en": "Driver"},
+        "spark": {"id": "Percikan", "en": "Spark"},
+        "anchor": {"id": "Jangkar", "en": "Anchor"},
+        "analyst": {"id": "Analis", "en": "Analyst"}
+    }
+    
+    primary_name = drive_names[primary][language]
+    secondary_name = drive_names[secondary][language]
+    
+    # ELITE+ SYSTEM PROMPT
+    elite_plus_system_prompt = f"""You are a PREMIUM PERSONALITY INTELLIGENCE ENGINE (ELITE+ TIER)
+operating under STRICT ISO-STYLE GOVERNANCE with ELITE+ PROGRAM ACTIVATION.
+
+====================================================
+ELITE+ TIER ACTIVATION CONFIRMED
+====================================================
+- user_is_paid: true
+- tier: elite_plus / certification
+- All Elite modules + Elite+ modules activated
+
+All outputs MUST comply with:
+- AI Governance & HITL Policy
+- Annex A (Risk Thresholds)
+- Annex B (Prohibited Terms)
+- Annex C (Moderator Checklist)
+- Premium & Elite Rules
+
+====================================================
+ABSOLUTE LIMITS (ELITE+ ENHANCED)
+====================================================
+- NEVER use "certified therapist / psychologist"
+- NEVER imply mental health treatment
+- Use "Certificate of Completion / Competency" only
+- Frame as LEARNING & SKILL MASTERY, not therapy
+- No diagnosis, no labeling, no manipulation
+- Growth is iterative, not instant
+- Human support is strength, not failure
+
+====================================================
+SAFETY OVERRIDE TRIGGERS
+====================================================
+If detected:
+- User seeks authority validation for control
+- User seeks to dominate others
+- Emotional distress escalates
+THEN:
+- Reduce depth
+- Switch to SAFE RESPONSE
+- Route to human review
+
+====================================================
+LANGUAGE & STYLE
+====================================================
+- Language: {"Indonesian (Bahasa Indonesia)" if language == "id" else "English"}
+- Professional, Calm, Warm, Mentor-like
+- Non-clinical, Non-manipulative
+- Focus on skill-building, not fixing people
+- Use markdown formatting with ## headings"""
+
+    # Build Elite+ modules
+    elite_plus_modules = []
+    
+    # MODULE 14: Certification Program
+    if request.include_certification:
+        cert_level = request.certification_level or 1
+        level_names = {
+            1: {"id": "Level 1 — Fondasi Kesadaran Diri", "en": "Level 1 — Self-Awareness Foundations"},
+            2: {"id": "Level 2 — Penguasaan Komunikasi", "en": "Level 2 — Communication Mastery"},
+            3: {"id": "Level 3 — Kepemimpinan Relasional", "en": "Level 3 — Relational Leadership"},
+            4: {"id": "Level 4 — Kecerdasan Relasional Terapan", "en": "Level 4 — Applied Relational Intelligence"}
+        }
+        elite_plus_modules.append(f"""
+## SECTION 14 — CERTIFICATION PROGRAM: RELATIONAL INTELLIGENCE
+
+User is at: {level_names.get(cert_level, level_names[1])[language]}
+User Profile: {primary_name} with {secondary_name} secondary
+Context: {series.title()}
+
+IMPORTANT RULES:
+- Use "Certificate of Completion" or "Certificate of Competency"
+- NEVER use "certified therapist" or "psychologist"
+- NEVER imply mental health treatment
+- Frame as LEARNING & SKILL MASTERY
+
+Generate for LEVEL {cert_level}:
+
+### {level_names.get(cert_level, level_names[1])[language]}
+
+**Learning Objectives:**
+- [3-4 specific objectives for this level based on {primary_name} profile]
+
+**Core Skills to Practice:**
+- [4-5 skills specific to this level]
+
+**Reflection Prompts:**
+- [3 reflection questions personalized to {primary_name}-{secondary_name}]
+
+**Completion Criteria (Non-Exam Based):**
+- [3-4 criteria based on participation and reflection, not testing]
+
+**Personalized Focus for {primary_name}:**
+- [2-3 specific focus areas for this personality type at this level]
+
+End with: "Upon completion of all levels, you will receive a Certificate of Completion in Relational Intelligence."
+""")
+    
+    # MODULE 15: AI-Human Hybrid Coaching
+    if request.include_coaching_model:
+        elite_plus_modules.append(f"""
+## SECTION 15 — AI–HUMAN HYBRID COACHING MODEL
+
+For {primary_name}-{secondary_name} profile in {series.title()} context:
+
+### 15.1 AI ROLE (Automated Support)
+- First-line reflection & insight based on {primary_name} patterns
+- Pattern recognition for {secondary_name} tendencies (non-diagnostic)
+- Skill suggestions personalized to your profile
+- Progress tracking prompts
+
+### 15.2 HUMAN ROLE (Coach/Mentor Support)
+- Review for Level 2-3 flagged cases
+- Contextual nuance for complex situations
+- Emotional grounding support
+- Ethical boundary guidance
+
+### 15.3 ESCALATION LOGIC
+- **Level 1 (Normal)**: AI handles independently
+- **Level 2 (Sensitive)**: AI + sampling review by human
+- **Level 3+ (Critical)**: Human-only guidance required
+
+### 15.4 YOUR PERSONALIZED SESSION FLOW
+Based on your {primary_name} style:
+1. You complete assessment → AI delivers structured insight
+2. If flagged (stress/sensitivity) → Routed to human coach
+3. Human coach responds using platform guidelines
+4. AI summarizes learning (not replacing human wisdom)
+
+### 15.5 RECOMMENDED COACHING FREQUENCY
+For {primary_name} profile:
+- {"Weekly check-ins recommended for action-oriented progress" if primary == "driver" else "Bi-weekly sessions with space for reflection" if primary == "analyst" else "Regular connection-focused sessions" if primary == "spark" else "Consistent, predictable session rhythm"}
+
+RULES:
+- AI never impersonates a human
+- Human guidance overrides AI
+- All interventions logged for quality
+""")
+    
+    # MODULE 16: Governance Dashboard
+    if request.include_governance_dashboard:
+        elite_plus_modules.append(f"""
+## SECTION 16 — BOARD-LEVEL AI GOVERNANCE DASHBOARD
+
+This section provides aggregated metrics for leadership visibility.
+NO individual user tracking or PII exposure.
+
+### 16.1 AI SAFETY METRICS (AGGREGATED)
+- % Level 1 / Level 2 / Level 3 outputs: [Placeholder for real data]
+- Premium vs non-premium flag rates
+- Average moderation SLA: [Target: <24 hours for Level 3]
+- Safe response frequency
+
+### 16.2 ETHICAL RISK INDICATORS
+- Weaponization attempts: [Count & trend - monthly]
+- Repeated distress patterns: [Anonymized aggregate]
+- Escalation frequency over time
+
+### 16.3 HITL PERFORMANCE METRICS
+- Moderator decisions distribution:
+  * Approve as-is: [%]
+  * Approve with buffer: [%]
+  * Edit required: [%]
+  * Safe response only: [%]
+  * Escalate: [%]
+- Edit vs approve ratio
+- Audit completeness rate
+
+### 16.4 BUSINESS SAFETY BALANCE
+- Conversion vs safety correlation
+- Retention of flagged users
+- Complaint rate (AI misuse): [Target: <0.1%]
+
+### 16.5 COMPLIANCE STATUS
+- Annex A (Risk Thresholds): ✅ Active
+- Annex B (Prohibited Terms): ✅ Active
+- Annex C (Moderator Checklist): ✅ Active
+- HITL Policy: ✅ Enforced
+
+RULES:
+- Dashboard is read-only for Board/Investors
+- No individual user tracking
+- No PII exposure
+- Aggregated data only
+""")
+    
+    # Build complete user prompt
+    elite_plus_user_prompt = f"""
+====================================================
+ELITE+ INPUTS
+====================================================
+- personality_profile:
+  - dominant_style: {primary_name}
+  - secondary_style: {secondary_name}
+  - score_distribution: Driver={scores.get("driver", 0)}, Spark={scores.get("spark", 0)}, Anchor={scores.get("anchor", 0)}, Analyst={scores.get("analyst", 0)}
+- stress_profile:
+  - stress_flag: {str(stress_flag).lower()}
+- context:
+  - relationship_focus: {series}
+  - balance_index: {result.get('balance_index', 0)}
+- user_is_paid: true
+- tier: elite_plus
+
+====================================================
+BASE REPORT (SECTIONS 1-7)
+====================================================
+Generate the standard 7-section Premium report:
+## SECTION 1 — EXECUTIVE SELF SNAPSHOT
+## SECTION 2 — RELATIONAL IMPACT MAP
+## SECTION 3 — STRESS & BLIND SPOT AWARENESS
+## SECTION 4 — HOW TO RELATE WITH OTHER PERSONALITY STYLES
+## SECTION 5 — PERSONAL GROWTH & CALIBRATION PLAN
+## SECTION 6 — RELATIONSHIP REPAIR & PREVENTION TOOLS
+## SECTION 7 — ETHICAL SAFETY CLOSING
+
+====================================================
+ELITE+ MODULES (SECTIONS 14-16)
+====================================================
+{chr(10).join(elite_plus_modules) if elite_plus_modules else "No Elite+ modules requested."}
+
+====================================================
+ELITE+ CLOSING STATEMENT (MANDATORY)
+====================================================
+End with:
+- This program builds skills, not labels
+- Growth is iterative, not instant
+- Human support is a strength
+- Ethical use of insight is mandatory
+
+DELIVER ELITE+ OUTPUT NOW.
+"""
+
+    # Generate using AI
+    EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY")
+    
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_KEY,
+            session_id=f"elite_plus_{result_id}",
+            system_message=elite_plus_system_prompt
+        ).with_model("openai", "gpt-5.2")
+        elite_plus_content = await chat.send_message(UserMessage(text=elite_plus_user_prompt))
+    except Exception as e:
+        logger.warning(f"GPT-5.2 failed for elite+ report: {e}")
+        try:
+            chat = LlmChat(
+                api_key=EMERGENT_KEY,
+                session_id=f"elite_plus_{result_id}_fallback",
+                system_message=elite_plus_system_prompt
+            ).with_model("openai", "gpt-4o")
+            elite_plus_content = await chat.send_message(UserMessage(text=elite_plus_user_prompt))
+        except Exception as e2:
+            raise HTTPException(status_code=500, detail=f"Failed to generate elite+ report: {e2}")
+    
+    # Enhanced HITL+ for Elite+
+    hitl_level = 1
+    hitl_flags = []
+    
+    # Elite+ specific HITL rules
+    if request.include_certification:
+        hitl_flags.append("certification_module_active")
+    
+    if stress_flag:
+        hitl_level = max(hitl_level, 2)
+        hitl_flags.append("stress_detected")
+    
+    # Check for dangerous patterns
+    content_lower = elite_plus_content.lower()
+    danger_patterns = ["therapist", "diagnos", "treatment", "coercion", "dominate", "control them"]
+    for pattern in danger_patterns:
+        if pattern in content_lower:
+            hitl_level = 3
+            hitl_flags.append(f"prohibited_content:{pattern}")
+            break
+    
+    hitl_status = "approved" if hitl_level == 1 else "approved_with_buffer" if hitl_level == 2 else "pending_review"
+    
+    # Save elite+ report
+    report_id = f"elite_plus_{uuid.uuid4().hex[:12]}"
+    elite_plus_report = {
+        "report_id": report_id,
+        "result_id": result_id,
+        "user_id": user["user_id"],
+        "language": language,
+        "tier": "elite_plus",
+        "content": elite_plus_content,
+        "modules_activated": {
+            "certification": request.include_certification,
+            "certification_level": request.certification_level,
+            "coaching_model": request.include_coaching_model,
+            "governance_dashboard": request.include_governance_dashboard
+        },
+        "hitl_status": hitl_status,
+        "hitl_level": hitl_level,
+        "hitl_flags": hitl_flags,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    await db.elite_plus_reports.replace_one(
+        {"result_id": result_id, "language": language},
+        elite_plus_report,
+        upsert=True
+    )
+    
+    return {
+        "report_id": report_id,
+        "result_id": result_id,
+        "tier": "elite_plus",
+        "content": elite_plus_content,
+        "modules_activated": elite_plus_report["modules_activated"],
+        "hitl_status": hitl_status,
+        "hitl_level": hitl_level
+    }
+
+@report_router.get("/elite-plus/{result_id}")
+async def get_elite_plus_report(result_id: str, language: str = "id", user=Depends(get_current_user)):
+    """Get existing elite+ report"""
+    report = await db.elite_plus_reports.find_one(
+        {"result_id": result_id, "user_id": user["user_id"], "language": language},
+        {"_id": 0}
+    )
+    if not report:
+        raise HTTPException(status_code=404, detail="Elite+ report not found. Generate one first.")
+    return report
+
 # ==================== ADMIN CMS ROUTES ====================
 
 class PricingUpdate(BaseModel):
@@ -2450,6 +3627,266 @@ async def delete_coupon(coupon_id: str, user=Depends(get_admin_user)):
         raise HTTPException(status_code=404, detail="Coupon not found")
     return {"message": "Coupon deleted"}
 
+# ==================== ENHANCED ADMIN CMS ENDPOINTS ====================
+
+@admin_router.put("/coupons/{coupon_id}")
+async def update_coupon(coupon_id: str, data: CouponCreateAdvanced, user=Depends(get_admin_user)):
+    """Update an existing coupon"""
+    existing = await db.coupons.find_one({"coupon_id": coupon_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Coupon not found")
+    
+    update_data = {
+        **data.dict(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": user["user_id"]
+    }
+    
+    await db.coupons.update_one(
+        {"coupon_id": coupon_id},
+        {"$set": update_data}
+    )
+    return {"message": "Coupon updated", "coupon_id": coupon_id}
+
+@admin_router.post("/coupons/advanced")
+async def create_coupon_advanced(data: CouponCreateAdvanced, user=Depends(get_admin_user)):
+    """Create a coupon with advanced options"""
+    existing = await db.coupons.find_one({"code": data.code.upper()}, {"_id": 0})
+    if existing:
+        raise HTTPException(status_code=400, detail="Coupon code already exists")
+    
+    coupon = {
+        "coupon_id": f"coupon_{uuid.uuid4().hex[:8]}",
+        "code": data.code.upper(),
+        "discount_type": data.discount_type,
+        "discount_value": data.discount_value,
+        "discount_percent": data.discount_value if data.discount_type == "percent" else 0,
+        "max_uses": data.max_uses,
+        "min_purchase_idr": data.min_purchase_idr,
+        "valid_products": data.valid_products,
+        "valid_from": data.valid_from or datetime.now(timezone.utc).isoformat(),
+        "valid_until": data.valid_until,
+        "one_per_user": data.one_per_user,
+        "uses": 0,
+        "active": data.active,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": user["user_id"]
+    }
+    await db.coupons.insert_one(coupon)
+    return {"coupon_id": coupon["coupon_id"], "message": "Coupon created", "coupon": {k: v for k, v in coupon.items() if k != "_id"}}
+
+@admin_router.post("/coupons/{coupon_id}/toggle")
+async def toggle_coupon(coupon_id: str, user=Depends(get_admin_user)):
+    """Toggle coupon active status"""
+    coupon = await db.coupons.find_one({"coupon_id": coupon_id}, {"_id": 0})
+    if not coupon:
+        raise HTTPException(status_code=404, detail="Coupon not found")
+    
+    new_status = not coupon.get("active", True)
+    await db.coupons.update_one(
+        {"coupon_id": coupon_id},
+        {"$set": {"active": new_status, "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    return {"message": f"Coupon {'activated' if new_status else 'deactivated'}", "active": new_status}
+
+@admin_router.get("/coupons/usage-stats")
+async def get_coupon_usage_stats(user=Depends(get_admin_user)):
+    """Get coupon usage statistics"""
+    pipeline = [
+        {"$group": {
+            "_id": None,
+            "total_coupons": {"$sum": 1},
+            "active_coupons": {"$sum": {"$cond": ["$active", 1, 0]}},
+            "total_uses": {"$sum": "$uses"},
+            "avg_discount": {"$avg": "$discount_percent"}
+        }}
+    ]
+    stats = await db.coupons.aggregate(pipeline).to_list(1)
+    
+    # Get top used coupons
+    top_coupons = await db.coupons.find(
+        {"uses": {"$gt": 0}},
+        {"_id": 0, "code": 1, "uses": 1, "discount_percent": 1, "discount_type": 1, "discount_value": 1}
+    ).sort("uses", -1).limit(10).to_list(10)
+    
+    return {
+        "summary": stats[0] if stats else {"total_coupons": 0, "active_coupons": 0, "total_uses": 0, "avg_discount": 0},
+        "top_coupons": top_coupons
+    }
+
+@admin_router.post("/pricing")
+async def create_pricing(data: PricingCreate, user=Depends(get_admin_user)):
+    """Create a new pricing tier"""
+    existing = await db.pricing.find_one({"product_id": data.product_id}, {"_id": 0})
+    if existing:
+        raise HTTPException(status_code=400, detail="Product ID already exists")
+    
+    pricing_doc = {
+        **data.dict(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": user["user_id"]
+    }
+    await db.pricing.insert_one(pricing_doc)
+    return {"message": "Pricing tier created", "product_id": data.product_id}
+
+@admin_router.delete("/pricing/{product_id}")
+async def delete_pricing(product_id: str, user=Depends(get_admin_user)):
+    """Delete a pricing tier"""
+    result = await db.pricing.delete_one({"product_id": product_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Pricing tier not found")
+    return {"message": "Pricing tier deleted"}
+
+@admin_router.post("/questions/bulk")
+async def create_questions_bulk(data: QuestionBulkCreate, user=Depends(get_admin_user)):
+    """Bulk create questions for a series"""
+    created_count = 0
+    errors = []
+    
+    for idx, q in enumerate(data.questions):
+        try:
+            question_id = f"q_{data.series}_{uuid.uuid4().hex[:8]}"
+            question = {
+                "question_id": question_id,
+                "series": data.series,
+                "question_id_text": q.get("id_text", q.get("question_id_text", "")),
+                "question_en_text": q.get("en_text", q.get("question_en_text", "")),
+                "question_type": q.get("question_type", "forced_choice"),
+                "options": q.get("options", []),
+                "scoring_map": {opt.get("archetype", ""): 1 for opt in q.get("options", [])},
+                "stress_marker_flag": q.get("stress_marker_flag", False),
+                "active": q.get("active", True),
+                "order": q.get("order", idx + 1),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_by": user["user_id"]
+            }
+            await db.questions.insert_one(question)
+            created_count += 1
+        except Exception as e:
+            errors.append({"index": idx, "error": str(e)})
+    
+    return {
+        "message": f"Created {created_count} questions",
+        "created_count": created_count,
+        "total_submitted": len(data.questions),
+        "errors": errors[:10] if errors else []
+    }
+
+@admin_router.post("/questions/{question_id}/toggle")
+async def toggle_question(question_id: str, user=Depends(get_admin_user)):
+    """Toggle question active status"""
+    question = await db.questions.find_one({"question_id": question_id}, {"_id": 0})
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+    
+    new_status = not question.get("active", True)
+    await db.questions.update_one(
+        {"question_id": question_id},
+        {"$set": {"active": new_status, "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    return {"message": f"Question {'activated' if new_status else 'deactivated'}", "active": new_status}
+
+@admin_router.post("/questions/reorder")
+async def reorder_questions(series: str, question_ids: List[str], user=Depends(get_admin_user)):
+    """Reorder questions in a series"""
+    for idx, question_id in enumerate(question_ids):
+        await db.questions.update_one(
+            {"question_id": question_id, "series": series},
+            {"$set": {"order": idx + 1}}
+        )
+    return {"message": "Questions reordered", "series": series}
+
+@admin_router.get("/questions/stats")
+async def get_questions_stats(user=Depends(get_admin_user)):
+    """Get questions statistics by series"""
+    pipeline = [
+        {"$group": {
+            "_id": "$series",
+            "total": {"$sum": 1},
+            "active": {"$sum": {"$cond": ["$active", 1, 0]}},
+            "stress_markers": {"$sum": {"$cond": ["$stress_marker_flag", 1, 0]}}
+        }},
+        {"$sort": {"_id": 1}}
+    ]
+    stats = await db.questions.aggregate(pipeline).to_list(100)
+    
+    return {
+        "by_series": {item["_id"]: {
+            "total": item["total"],
+            "active": item["active"],
+            "inactive": item["total"] - item["active"],
+            "stress_markers": item["stress_markers"]
+        } for item in stats}
+    }
+
+@admin_router.get("/dashboard/overview")
+async def get_admin_dashboard_overview(user=Depends(get_admin_user)):
+    """Get comprehensive admin dashboard overview"""
+    now = datetime.now(timezone.utc)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    week_ago = (now - timedelta(days=7)).isoformat()
+    month_ago = (now - timedelta(days=30)).isoformat()
+    
+    # User stats
+    total_users = await db.users.count_documents({})
+    new_users_today = await db.users.count_documents({"created_at": {"$gte": today}})
+    new_users_week = await db.users.count_documents({"created_at": {"$gte": week_ago}})
+    
+    # Quiz stats
+    total_results = await db.results.count_documents({})
+    results_today = await db.results.count_documents({"created_at": {"$gte": today}})
+    results_week = await db.results.count_documents({"created_at": {"$gte": week_ago}})
+    
+    # Payment stats
+    total_paid = await db.payments.count_documents({"status": "paid"})
+    paid_today = await db.payments.count_documents({"status": "paid", "paid_at": {"$gte": today}})
+    paid_week = await db.payments.count_documents({"status": "paid", "paid_at": {"$gte": week_ago}})
+    
+    # Revenue calculation
+    revenue_pipeline = [
+        {"$match": {"status": "paid", "paid_at": {"$gte": month_ago}}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]
+    revenue_month = await db.payments.aggregate(revenue_pipeline).to_list(1)
+    
+    # Archetype distribution
+    archetype_pipeline = [
+        {"$group": {"_id": "$primary_archetype", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}}
+    ]
+    archetype_dist = await db.results.aggregate(archetype_pipeline).to_list(10)
+    
+    # Series distribution
+    series_pipeline = [
+        {"$group": {"_id": "$series", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}}
+    ]
+    series_dist = await db.results.aggregate(series_pipeline).to_list(10)
+    
+    return {
+        "users": {
+            "total": total_users,
+            "today": new_users_today,
+            "week": new_users_week
+        },
+        "quizzes": {
+            "total": total_results,
+            "today": results_today,
+            "week": results_week
+        },
+        "payments": {
+            "total_paid": total_paid,
+            "today": paid_today,
+            "week": paid_week,
+            "revenue_month": revenue_month[0]["total"] if revenue_month else 0
+        },
+        "distributions": {
+            "archetypes": {item["_id"]: item["count"] for item in archetype_dist if item["_id"]},
+            "series": {item["_id"]: item["count"] for item in series_dist if item["_id"]}
+        },
+        "generated_at": now.isoformat()
+    }
+
 @admin_router.get("/users")
 async def get_users(skip: int = 0, limit: int = 50, user=Depends(get_admin_user)):
     """Get all users (admin only)"""
@@ -2457,12 +3894,238 @@ async def get_users(skip: int = 0, limit: int = 50, user=Depends(get_admin_user)
     total = await db.users.count_documents({})
     return {"users": users, "total": total}
 
+@admin_router.delete("/reports/clear-cache")
+async def clear_reports_cache(user=Depends(get_admin_user)):
+    """Clear all cached AI reports to force regeneration with new prompts"""
+    reports_count = await db.reports.count_documents({})
+    deep_dive_count = await db.deep_dive_reports.count_documents({})
+    
+    # Delete all reports
+    await db.reports.delete_many({})
+    await db.deep_dive_reports.delete_many({})
+    
+    return {
+        "message": "All cached reports cleared",
+        "reports_deleted": reports_count,
+        "deep_dive_reports_deleted": deep_dive_count
+    }
+
+@admin_router.put("/users/{user_id}/tier")
+async def update_user_tier(user_id: str, tier: str, user=Depends(get_admin_user)):
+    """Update user subscription tier (free, premium, elite, elite_plus)"""
+    valid_tiers = ["free", "premium", "elite", "elite_plus", "certification"]
+    if tier not in valid_tiers:
+        raise HTTPException(status_code=400, detail=f"Invalid tier. Must be one of: {valid_tiers}")
+    
+    target_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "tier": tier,
+            "tier_updated_at": datetime.now(timezone.utc).isoformat(),
+            "tier_updated_by": user["user_id"]
+        }}
+    )
+    
+    return {
+        "message": f"User tier updated to {tier}",
+        "user_id": user_id,
+        "tier": tier
+    }
+
+@admin_router.get("/elite/reports")
+async def get_all_elite_reports(skip: int = 0, limit: int = 50, user=Depends(get_admin_user)):
+    """Get all elite reports for admin review"""
+    reports = await db.elite_reports.find({}, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    total = await db.elite_reports.count_documents({})
+    return {"reports": reports, "total": total}
+
 @admin_router.get("/results")
 async def get_all_results(skip: int = 0, limit: int = 50, user=Depends(get_admin_user)):
     """Get all quiz results (admin only)"""
     results = await db.results.find({}, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
     total = await db.results.count_documents({})
     return {"results": results, "total": total}
+
+# ==================== HITL MODERATION ADMIN ROUTES ====================
+
+class ModerationDecisionRequest(BaseModel):
+    action: str  # approve_as_is, approve_with_buffer, edit_output, safe_response_only, escalate
+    moderator_notes: str
+    edited_output: Optional[str] = None
+
+class KeywordUpdateRequest(BaseModel):
+    category: str
+    keywords_id: List[str]
+    keywords_en: List[str]
+
+@admin_router.get("/hitl/stats")
+async def get_hitl_stats(user=Depends(get_admin_user)):
+    """Get HITL moderation statistics"""
+    stats = await hitl_engine.get_hitl_stats()
+    return stats
+
+@admin_router.get("/hitl/queue")
+async def get_moderation_queue(
+    status: Optional[str] = None,
+    risk_level: Optional[str] = None,
+    series: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    user=Depends(get_admin_user)
+):
+    """Get moderation queue items"""
+    items = await hitl_engine.get_moderation_queue(
+        status=status,
+        risk_level=risk_level,
+        series=series,
+        limit=limit,
+        skip=skip
+    )
+    
+    # Get total count
+    query = {}
+    if status:
+        query["status"] = status
+    if risk_level:
+        query["risk_level"] = risk_level
+    if series:
+        query["series"] = series
+    total = await db.moderation_queue.count_documents(query)
+    
+    return {"items": items, "total": total}
+
+@admin_router.get("/hitl/queue/{queue_id}")
+async def get_queue_item(queue_id: str, user=Depends(get_admin_user)):
+    """Get detailed moderation queue item"""
+    item = await hitl_engine.get_queue_item_detail(queue_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+    
+    # Get audit logs
+    audit_logs = await hitl_engine.get_audit_logs(queue_id)
+    item["audit_logs"] = audit_logs
+    
+    return item
+
+@admin_router.post("/hitl/queue/{queue_id}/decision")
+async def process_moderation_decision(
+    queue_id: str,
+    data: ModerationDecisionRequest,
+    user=Depends(get_admin_user)
+):
+    """Process moderator decision on a queue item"""
+    # Map string action to enum
+    action_map = {
+        "approve_as_is": ModerationAction.APPROVE_AS_IS,
+        "approve_with_buffer": ModerationAction.APPROVE_WITH_BUFFER,
+        "edit_output": ModerationAction.EDIT_OUTPUT,
+        "safe_response_only": ModerationAction.SAFE_RESPONSE_ONLY,
+        "escalate": ModerationAction.ESCALATE
+    }
+    
+    if data.action not in action_map:
+        raise HTTPException(status_code=400, detail=f"Invalid action: {data.action}")
+    
+    decision = ModerationDecision(
+        action=action_map[data.action],
+        moderator_notes=data.moderator_notes,
+        edited_output=data.edited_output
+    )
+    
+    try:
+        result = await hitl_engine.process_moderation_decision(
+            queue_id=queue_id,
+            decision=decision,
+            moderator_id=user["user_id"]
+        )
+        
+        # If approved, update the report with final output
+        queue_item = await hitl_engine.get_queue_item_detail(queue_id)
+        if queue_item and result.get("final_output"):
+            await db.reports.update_one(
+                {"result_id": queue_item["result_id"], "hitl_status": "pending_review"},
+                {"$set": {
+                    "content": result["final_output"],
+                    "hitl_status": result["status"],
+                    "moderated_at": datetime.now(timezone.utc).isoformat(),
+                    "moderator_id": user["user_id"]
+                }}
+            )
+        
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@admin_router.get("/hitl/keywords")
+async def get_all_keywords(user=Depends(get_admin_user)):
+    """Get all risk keyword categories"""
+    keywords = await hitl_engine.get_all_keywords()
+    return {"keywords": keywords}
+
+@admin_router.put("/hitl/keywords/{category}")
+async def update_keywords(
+    category: str,
+    data: KeywordUpdateRequest,
+    user=Depends(get_admin_user)
+):
+    """Update keywords for a category"""
+    await hitl_engine.update_keywords(
+        category=category,
+        keywords_id=data.keywords_id,
+        keywords_en=data.keywords_en
+    )
+    
+    # Audit log
+    await db.audit_logs.insert_one({
+        "log_id": f"log_{uuid.uuid4().hex[:12]}",
+        "action": "keyword_update",
+        "category": category,
+        "moderator_id": user["user_id"],
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    })
+    
+    return {"message": f"Keywords for {category} updated"}
+
+@admin_router.get("/hitl/assessments")
+async def get_risk_assessments(
+    skip: int = 0,
+    limit: int = 50,
+    risk_level: Optional[str] = None,
+    user=Depends(get_admin_user)
+):
+    """Get risk assessments history"""
+    query = {}
+    if risk_level:
+        query["risk_level"] = risk_level
+    
+    assessments = await db.risk_assessments.find(
+        query,
+        {"_id": 0}
+    ).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    
+    total = await db.risk_assessments.count_documents(query)
+    
+    return {"assessments": assessments, "total": total}
+
+@admin_router.get("/hitl/audit-logs")
+async def get_all_audit_logs(
+    skip: int = 0,
+    limit: int = 100,
+    user=Depends(get_admin_user)
+):
+    """Get all audit logs"""
+    logs = await db.audit_logs.find(
+        {},
+        {"_id": 0}
+    ).sort("timestamp", -1).skip(skip).limit(limit).to_list(limit)
+    
+    total = await db.audit_logs.count_documents({})
+    
+    return {"logs": logs, "total": total}
 
 # ==================== SEED DATA ====================
 
@@ -4602,17 +6265,746 @@ async def seed_admin_user():
         await db.users.insert_one(admin)
         logger.info(f"Admin user created: {admin_email}")
 
+# ==================== DEEP DIVE ROUTES ====================
+
+class DeepDiveSubmission(BaseModel):
+    result_id: str
+    answers: List[Dict[str, Any]]
+
+@deep_dive_router.get("/questions")
+async def get_deep_dive_questions(language: str = "id"):
+    """Get Deep Dive assessment questions"""
+    questions = DEEP_DIVE_QUESTIONS.get("universal", [])
+    
+    formatted = []
+    for i, q in enumerate(questions):
+        formatted.append({
+            "question_id": f"dd_{i+1}",
+            "section": q.get("section", "general"),
+            "text": q["id_text"] if language == "id" else q["en_text"],
+            "options": [
+                {
+                    "text": opt["text_id"] if language == "id" else opt["text_en"],
+                    "archetype": opt["archetype"],
+                    "weight": opt.get("weight", 1)
+                }
+                for opt in q["options"]
+            ]
+        })
+    
+    return {
+        "questions": formatted,
+        "total": len(formatted),
+        "sections": ["inner_motivation", "stress_response", "relationship_dynamics", "communication_patterns"]
+    }
+
+@deep_dive_router.post("/submit")
+async def submit_deep_dive(data: DeepDiveSubmission, user=Depends(get_current_user)):
+    """Submit Deep Dive assessment and generate enhanced analysis"""
+    
+    # Verify result exists and user owns it
+    result = await db.results.find_one({"result_id": data.result_id, "user_id": user["user_id"]}, {"_id": 0})
+    if not result:
+        raise HTTPException(status_code=404, detail="Base result not found")
+    
+    # Check if user has paid for deep dive
+    payment = await db.payments.find_one({
+        "user_id": user["user_id"],
+        "result_id": data.result_id,
+        "product_type": {"$in": ["deep_dive", "subscription"]},
+        "status": "paid"
+    }, {"_id": 0})
+    
+    if not payment:
+        raise HTTPException(status_code=402, detail="Deep Dive analysis requires payment")
+    
+    # Calculate deep dive scores
+    section_scores = {
+        "inner_motivation": {"driver": 0, "spark": 0, "anchor": 0, "analyst": 0},
+        "stress_response": {"driver": 0, "spark": 0, "anchor": 0, "analyst": 0},
+        "relationship_dynamics": {"driver": 0, "spark": 0, "anchor": 0, "analyst": 0},
+        "communication_patterns": {"driver": 0, "spark": 0, "anchor": 0, "analyst": 0}
+    }
+    
+    total_scores = {"driver": 0, "spark": 0, "anchor": 0, "analyst": 0}
+    
+    for answer in data.answers:
+        archetype = answer.get("archetype")
+        section = answer.get("section", "general")
+        weight = answer.get("weight", 1)
+        
+        if archetype in total_scores:
+            total_scores[archetype] += weight
+            if section in section_scores:
+                section_scores[section][archetype] += weight
+    
+    # Calculate percentages
+    total = sum(total_scores.values()) or 1
+    percentages = {k: round(v / total * 100, 1) for k, v in total_scores.items()}
+    
+    # Determine primary and secondary archetypes from deep dive
+    sorted_archetypes = sorted(percentages.items(), key=lambda x: x[1], reverse=True)
+    dd_primary = sorted_archetypes[0][0]
+    dd_secondary = sorted_archetypes[1][0]
+    
+    # Combine with base result
+    base_primary = result.get("primary_archetype")
+    base_secondary = result.get("secondary_archetype")
+    
+    # Generate type interaction data
+    interactions = {}
+    for other_type in ["driver", "spark", "anchor", "analyst"]:
+        interaction_key = f"with_{other_type}"
+        if dd_primary in TYPE_INTERACTIONS and interaction_key in TYPE_INTERACTIONS[dd_primary]:
+            interactions[other_type] = TYPE_INTERACTIONS[dd_primary][interaction_key]
+    
+    # Save deep dive result
+    deep_dive_id = f"dd_{uuid.uuid4().hex[:12]}"
+    deep_dive_result = {
+        "deep_dive_id": deep_dive_id,
+        "result_id": data.result_id,
+        "user_id": user["user_id"],
+        "answers": data.answers,
+        "section_scores": section_scores,
+        "total_scores": percentages,
+        "dd_primary": dd_primary,
+        "dd_secondary": dd_secondary,
+        "base_primary": base_primary,
+        "base_secondary": base_secondary,
+        "type_interactions": interactions,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    await db.deep_dive_results.insert_one(deep_dive_result)
+    
+    # Update base result with deep dive reference
+    await db.results.update_one(
+        {"result_id": data.result_id},
+        {"$set": {"deep_dive_id": deep_dive_id, "has_deep_dive": True}}
+    )
+    
+    deep_dive_result.pop("_id", None)
+    return deep_dive_result
+
+@deep_dive_router.get("/result/{result_id}")
+async def get_deep_dive_result(result_id: str, user=Depends(get_current_user)):
+    """Get Deep Dive result for a base result"""
+    deep_dive = await db.deep_dive_results.find_one(
+        {"result_id": result_id, "user_id": user["user_id"]},
+        {"_id": 0}
+    )
+    
+    if not deep_dive:
+        raise HTTPException(status_code=404, detail="Deep Dive result not found")
+    
+    return deep_dive
+
+@deep_dive_router.get("/type-interactions/{archetype}")
+async def get_type_interactions(archetype: str, language: str = "id"):
+    """Get interaction patterns for a specific archetype with all other types"""
+    if archetype not in TYPE_INTERACTIONS:
+        raise HTTPException(status_code=400, detail="Invalid archetype")
+    
+    interactions = {}
+    for other_type, data in TYPE_INTERACTIONS[archetype].items():
+        type_name = other_type.replace("with_", "")
+        lang_data = data.get(language, data.get("id"))
+        interactions[type_name] = lang_data
+    
+    return {
+        "archetype": archetype,
+        "interactions": interactions
+    }
+
+@deep_dive_router.post("/generate-report/{result_id}")
+async def generate_deep_dive_report(result_id: str, language: str = "id", user=Depends(get_current_user)):
+    """Generate comprehensive Deep Dive AI report - Professional Premium Analysis"""
+    
+    # Get deep dive result
+    deep_dive = await db.deep_dive_results.find_one(
+        {"result_id": result_id, "user_id": user["user_id"]},
+        {"_id": 0}
+    )
+    
+    if not deep_dive:
+        raise HTTPException(status_code=404, detail="Deep Dive result not found. Complete Deep Dive assessment first.")
+    
+    # Get base result
+    result = await db.results.find_one({"result_id": result_id}, {"_id": 0})
+    if not result:
+        raise HTTPException(status_code=404, detail="Base result not found")
+    
+    # Build comprehensive prompt
+    archetype_names = {
+        "driver": {"id": "Penggerak", "en": "Driver"},
+        "spark": {"id": "Percikan", "en": "Spark"},
+        "anchor": {"id": "Jangkar", "en": "Anchor"},
+        "analyst": {"id": "Analis", "en": "Analyst"}
+    }
+    
+    archetype_full_profile = {
+        "driver": {
+            "core_need": "Achievement, Control, Results",
+            "fear": "Loss of control, Being seen as weak, Failure",
+            "under_stress": "Becomes controlling, dismissive, impatient",
+            "gift": "Vision, decisiveness, courage to act"
+        },
+        "spark": {
+            "core_need": "Connection, Recognition, Fun",
+            "fear": "Rejection, Being ignored, Boredom",
+            "under_stress": "Becomes scattered, dramatic, seeks attention",
+            "gift": "Energy, creativity, social warmth"
+        },
+        "anchor": {
+            "core_need": "Security, Harmony, Belonging",
+            "fear": "Conflict, Abandonment, Change",
+            "under_stress": "Becomes passive, over-accommodating, resentful",
+            "gift": "Loyalty, patience, emotional presence"
+        },
+        "analyst": {
+            "core_need": "Understanding, Accuracy, Competence",
+            "fear": "Being wrong, Chaos, Loss of control through ignorance",
+            "under_stress": "Becomes rigid, critical, withdrawn",
+            "gift": "Insight, objectivity, problem-solving"
+        }
+    }
+    
+    primary_name = archetype_names[deep_dive["dd_primary"]][language]
+    secondary_name = archetype_names[deep_dive["dd_secondary"]][language]
+    primary_key = deep_dive["dd_primary"]
+    secondary_key = deep_dive["dd_secondary"]
+    
+    section_scores = deep_dive.get("section_scores", {})
+    interactions = deep_dive.get("type_interactions", {})
+    
+    # Get archetype profiles
+    primary_profile = archetype_full_profile.get(primary_key, {})
+    secondary_profile = archetype_full_profile.get(secondary_key, {})
+    
+    # Determine dominant patterns from section scores
+    motivation_dominant = max(section_scores.get("inner_motivation", {}), key=lambda k: section_scores.get("inner_motivation", {}).get(k, 0), default=primary_key)
+    stress_dominant = max(section_scores.get("stress_response", {}), key=lambda k: section_scores.get("stress_response", {}).get(k, 0), default=primary_key)
+    relationship_dominant = max(section_scores.get("relationship_dynamics", {}), key=lambda k: section_scores.get("relationship_dynamics", {}).get(k, 0), default=primary_key)
+    communication_dominant = max(section_scores.get("communication_patterns", {}), key=lambda k: section_scores.get("communication_patterns", {}).get(k, 0), default=primary_key)
+    
+    # PREMIUM PERSONALITY INTELLIGENCE ENGINE - DEEP DIVE ISO-STYLE
+    series_context = result.get('series', 'general').title()
+    stress_flag = result.get("stress_flag", False)
+    stress_markers_count = result.get("stress_markers_count", 0)
+    
+    system_prompt = f"""You are a PREMIUM PERSONALITY INTELLIGENCE ENGINE (DEEP DIVE MODE)
+operating under STRICT ISO-STYLE GOVERNANCE.
+
+You must comply with:
+- AI Governance & Human-in-the-Loop Policy
+- Annex A (HITL thresholds & sampling)
+- Annex B (Prohibited terms & content)
+- Annex C (Moderator checklist)
+
+====================================================
+CORE ROLE & BOUNDARIES
+====================================================
+Your role is to help a PAYING USER who has completed DEEP DIVE assessment:
+1) Understand themselves at a deeper, more nuanced level
+2) Understand how their tendencies affect relationships across all 4 personality types
+3) Learn specific scripts and strategies for each interaction type
+4) Receive a concrete, ethical, non-manipulative growth plan
+
+ABSOLUTE LIMITS:
+- Do NOT diagnose psychological or medical conditions
+- Do NOT label people as "toxic", "narcissistic", etc.
+- Do NOT judge or shame
+- Do NOT provide control, domination, or manipulation tactics
+- Do NOT encourage cutting off relationships as a default
+- Do NOT present traits as fixed or permanent
+
+====================================================
+INTERNAL PROPRIETARY FRAMEWORK
+====================================================
+4 Human Communication Drives:
+A) Driver/Penggerak – direction and decisiveness (Core Need: Achievement, Control, Results)
+B) Spark/Percikan – expression and connection (Core Need: Connection, Recognition, Fun)
+C) Anchor/Jangkar – stability and harmony (Core Need: Security, Harmony, Belonging)
+D) Analyst/Analis – structure and accuracy (Core Need: Understanding, Accuracy, Competence)
+
+====================================================
+USER'S DEEP DIVE DATA
+====================================================
+PRIMARY: {primary_name} ({primary_key})
+- Core Need: {primary_profile.get('core_need', 'N/A')}
+- Deepest Fear: {primary_profile.get('fear', 'N/A')}
+- Under Stress: {primary_profile.get('under_stress', 'N/A')}
+- Unique Gift: {primary_profile.get('gift', 'N/A')}
+
+SECONDARY: {secondary_name} ({secondary_key})
+- Core Need: {secondary_profile.get('core_need', 'N/A')}
+- Deepest Fear: {secondary_profile.get('fear', 'N/A')}
+- Under Stress: {secondary_profile.get('under_stress', 'N/A')}
+- Unique Gift: {secondary_profile.get('gift', 'N/A')}
+
+SECTION SCORES:
+- Inner Motivation: Dominant = {motivation_dominant}, Scores = {section_scores.get('inner_motivation', {{}})}
+- Stress Response: Dominant = {stress_dominant}, Scores = {section_scores.get('stress_response', {{}})}
+- Relationship Dynamics: Dominant = {relationship_dominant}, Scores = {section_scores.get('relationship_dynamics', {{}})}
+- Communication Pattern: Dominant = {communication_dominant}, Scores = {section_scores.get('communication_patterns', {{}})}
+
+CONTEXT:
+- Series: {series_context}
+- Base Primary: {result.get('primary_archetype')}
+- Balance Index: {result.get('balance_index', 0)}
+
+====================================================
+LANGUAGE & STYLE REQUIREMENTS
+====================================================
+- Language: {"Indonesian (Bahasa Indonesia)" if language == "id" else "English"}
+- Professional, Calm, Warm, Mentor-like
+- Never clinical, Never absolute, Never manipulative
+- Use probabilistic language ("tends to", "often", "in certain situations")
+- Use markdown formatting with ## headings
+- Total length: 2500-3500 words"""
+
+    user_prompt = f"""
+====================================================
+DEEP DIVE INPUTS
+====================================================
+- personality_profile:
+  - dominant_style: {primary_name} ({primary_key})
+  - secondary_style: {secondary_name} ({secondary_key})
+  - primary_core_need: {primary_profile.get('core_need', 'N/A')}
+  - primary_fear: {primary_profile.get('fear', 'N/A')}
+  - primary_gift: {primary_profile.get('gift', 'N/A')}
+- stress_profile:
+  - stress_markers_count: {stress_markers_count}
+  - stress_flag: {str(stress_flag).lower()}
+  - stress_dominant_pattern: {stress_dominant}
+- deep_dive_patterns:
+  - motivation_dominant: {motivation_dominant}
+  - relationship_dominant: {relationship_dominant}
+  - communication_dominant: {communication_dominant}
+- context:
+  - relationship_focus: {series_context}
+- language: {language}
+- user_is_paid: true (DEEP DIVE PREMIUM)
+
+====================================================
+OUTPUT STRUCTURE (MANDATORY - 7 SECTIONS)
+====================================================
+
+----------------------------------------------------
+## SECTION 1 — EXECUTIVE SELF SNAPSHOT (Deep Dive)
+----------------------------------------------------
+Provide an enhanced snapshot for {primary_name}-{secondary_name} profile:
+
+Include:
+- Core strengths amplified by this specific combination
+- Natural motivations (based on {motivation_dominant} pattern)
+- The unique synergy OR tension between {primary_name} and {secondary_name}
+- Situations where this combination excels
+- The hidden superpower of this profile
+
+Rules:
+- Use probabilistic language
+- Emphasize strengths BEFORE challenges
+- Reference the Deep Dive section scores where relevant
+
+----------------------------------------------------
+## SECTION 2 — RELATIONAL IMPACT MAP (Enhanced)
+----------------------------------------------------
+Explain how {primary_name}-{secondary_name} combination is EXPERIENCED by others in {series_context} context.
+
+Cover for EACH of the 4 types:
+### Impact on Driver/Penggerak:
+- How they perceive you
+- What you trigger in them (positive & negative)
+- Risk of miscommunication
+
+### Impact on Spark/Percikan:
+[Same structure]
+
+### Impact on Anchor/Jangkar:
+[Same structure]
+
+### Impact on Analyst/Analis:
+[Same structure]
+
+Important: No blaming, use perspective-taking language
+
+----------------------------------------------------
+## SECTION 3 — STRESS & BLIND SPOT AWARENESS (Deep Pattern)
+----------------------------------------------------
+Based on stress_dominant pattern ({stress_dominant}), explain:
+
+- Specific stress triggers for {primary_name} with {secondary_name} influence
+- Early warning signs (physical, emotional, behavioral)
+- The internal narrative that runs during stress
+- How your {stress_dominant} stress pattern affects others
+- Why others might misinterpret your reactions
+
+{"Include a gentle safety note: 'Stress indicators detected - prioritize self-regulation and consider reaching out to trusted support.'" if stress_flag else ""}
+
+----------------------------------------------------
+## SECTION 4 — DEEP CONNECTION GUIDE (Scripts for Each Type)
+----------------------------------------------------
+For EACH major personality style, provide SPECIFIC SCRIPTS:
+
+### Connecting with Driver/Penggerak:
+**Phrases that WORK:**
+- "[Exact phrase in {"Indonesian" if language == "id" else "English"}]"
+- "[Exact phrase]"
+
+**Phrases to AVOID:**
+- "[What NOT to say and why]"
+- "[What NOT to say and why]"
+
+**Keys to Success:**
+- [3 specific strategies for {series_context} context]
+
+### Connecting with Spark/Percikan:
+[Same structure]
+
+### Connecting with Anchor/Jangkar:
+[Same structure]
+
+### Connecting with Analyst/Analis:
+[Same structure]
+
+----------------------------------------------------
+## SECTION 5 — PERSONAL GROWTH & CALIBRATION PLAN
+----------------------------------------------------
+Based on {primary_name}-{secondary_name} profile with {motivation_dominant} motivation:
+
+Include:
+- 3 key growth skills specific to this combination
+- Concrete behavioral adjustments aligned with {series_context} relationships
+- 5 reflection prompts personalized to this profile
+- One weekly micro-habit that leverages your {primary_profile.get('gift', 'strengths')}
+
+Rules: Frame growth as calibration, not correction. Never imply the user is "broken."
+
+----------------------------------------------------
+## SECTION 6 — RELATIONSHIP REPAIR & PREVENTION TOOLS
+----------------------------------------------------
+For {primary_name}-{secondary_name} profile:
+
+Provide:
+- 3 de-escalating phrases that work with YOUR communication style
+- 3 phrases to AVOID (with explanation why they escalate)
+- A repair script after conflict (specific to your profile)
+- A boundary-setting example that honors both your {primary_name} directness and {secondary_name} needs
+
+----------------------------------------------------
+## SECTION 7 — ETHICAL SAFETY CLOSING
+----------------------------------------------------
+End with a grounding reminder personalized to {primary_name}-{secondary_name}:
+
+- Your {primary_profile.get('gift', 'unique gift')} is valuable
+- Personality is contextual and learnable
+- Growth happens through small, consistent actions
+- If emotions feel overwhelming, human support is valid and encouraged
+
+====================================================
+FINAL CHECK
+====================================================
+Before delivering:
+- Confirm no prohibited terms (toxic, narcissistic, diagnosis labels)
+- Confirm no clinical language
+- Confirm all scripts are ethical and non-manipulative
+- Confirm guidance empowers self-regulation
+
+DELIVER THE FULL PREMIUM DEEP DIVE REPORT NOW.
+"""
+    
+    try:
+        # Try GPT-5.2 first, fallback to GPT-4o
+        try:
+            chat = LlmChat(
+                api_key=EMERGENT_LLM_KEY,
+                session_id=f"deep_dive_{result_id}",
+                system_message=system_prompt
+            ).with_model("openai", "gpt-5.2")
+            
+            report_content = await chat.send_message(UserMessage(text=user_prompt))
+        except Exception as e:
+            logger.warning(f"GPT-5.2 failed for deep dive, using GPT-4o: {e}")
+            chat = LlmChat(
+                api_key=EMERGENT_LLM_KEY,
+                session_id=f"deep_dive_{result_id}_fallback",
+                system_message=system_prompt
+            ).with_model("openai", "gpt-4o")
+            
+            report_content = await chat.send_message(UserMessage(text=user_prompt))
+        
+        # Save report
+        report_id = f"ddr_{uuid.uuid4().hex[:12]}"
+        report = {
+            "report_id": report_id,
+            "deep_dive_id": deep_dive["deep_dive_id"],
+            "result_id": result_id,
+            "user_id": user["user_id"],
+            "language": language,
+            "content": report_content,
+            "report_type": "deep_dive",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        await db.deep_dive_reports.insert_one(report)
+        
+        report.pop("_id", None)
+        return report
+        
+    except Exception as e:
+        logger.error(f"Error generating deep dive report: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate deep dive report")
+
+# ==================== HITL ANALYTICS ROUTES ====================
+
+@analytics_router.get("/hitl/overview")
+async def get_hitl_analytics_overview(
+    days: int = 30,
+    user=Depends(get_admin_user)
+):
+    """Get HITL analytics overview"""
+    from_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    
+    # Get risk assessment distribution
+    pipeline_risk = [
+        {"$match": {"created_at": {"$gte": from_date}}},
+        {"$group": {"_id": "$risk_level", "count": {"$sum": 1}}},
+        {"$sort": {"_id": 1}}
+    ]
+    risk_distribution = await db.risk_assessments.aggregate(pipeline_risk).to_list(100)
+    
+    # Get moderation queue stats
+    pipeline_queue = [
+        {"$match": {"created_at": {"$gte": from_date}}},
+        {"$group": {"_id": "$status", "count": {"$sum": 1}}}
+    ]
+    queue_stats = await db.moderation_queue.aggregate(pipeline_queue).to_list(100)
+    
+    # Get keyword detection trends
+    pipeline_keywords = [
+        {"$match": {"created_at": {"$gte": from_date}}},
+        {"$unwind": {"path": "$detected_keywords", "preserveNullAndEmptyArrays": False}},
+        {"$group": {"_id": "$detected_keywords", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 20}
+    ]
+    keyword_trends = await db.risk_assessments.aggregate(pipeline_keywords).to_list(20)
+    
+    # Calculate average response time for moderated items
+    pipeline_response = [
+        {"$match": {"moderated_at": {"$exists": True}, "created_at": {"$gte": from_date}}},
+        {"$project": {
+            "response_time_seconds": {
+                "$divide": [
+                    {"$subtract": [{"$toDate": "$moderated_at"}, {"$toDate": "$created_at"}]},
+                    1000
+                ]
+            }
+        }},
+        {"$group": {
+            "_id": None,
+            "avg_response_time": {"$avg": "$response_time_seconds"},
+            "min_response_time": {"$min": "$response_time_seconds"},
+            "max_response_time": {"$max": "$response_time_seconds"},
+            "count": {"$sum": 1}
+        }}
+    ]
+    response_stats = await db.moderation_queue.aggregate(pipeline_response).to_list(1)
+    
+    return {
+        "period_days": days,
+        "risk_distribution": {item["_id"]: item["count"] for item in risk_distribution},
+        "queue_stats": {item["_id"]: item["count"] for item in queue_stats},
+        "keyword_trends": [{"keyword": k["_id"], "count": k["count"]} for k in keyword_trends],
+        "response_time": response_stats[0] if response_stats else {
+            "avg_response_time": 0,
+            "min_response_time": 0,
+            "max_response_time": 0,
+            "count": 0
+        }
+    }
+
+@analytics_router.get("/hitl/timeline")
+async def get_hitl_timeline(
+    days: int = 30,
+    interval: str = "day",
+    user=Depends(get_admin_user)
+):
+    """Get HITL events timeline for charts"""
+    from_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    
+    # Date format based on interval
+    date_format = "%Y-%m-%d" if interval == "day" else "%Y-%m-%d %H:00"
+    
+    # Risk level over time
+    pipeline = [
+        {"$match": {"created_at": {"$gte": from_date}}},
+        {"$addFields": {
+            "date": {"$dateToString": {"format": date_format, "date": {"$toDate": "$created_at"}}}
+        }},
+        {"$group": {
+            "_id": {"date": "$date", "level": "$risk_level"},
+            "count": {"$sum": 1}
+        }},
+        {"$sort": {"_id.date": 1}}
+    ]
+    
+    timeline_data = await db.risk_assessments.aggregate(pipeline).to_list(1000)
+    
+    # Restructure for frontend charting
+    dates = sorted(set(item["_id"]["date"] for item in timeline_data))
+    series = {
+        "level_1": [],
+        "level_2": [],
+        "level_3": []
+    }
+    
+    for date in dates:
+        for level in ["level_1", "level_2", "level_3"]:
+            count = next(
+                (item["count"] for item in timeline_data 
+                 if item["_id"]["date"] == date and item["_id"]["level"] == level),
+                0
+            )
+            series[level].append({"date": date, "count": count})
+    
+    return {
+        "dates": dates,
+        "series": series
+    }
+
+@analytics_router.get("/hitl/moderator-performance")
+async def get_moderator_performance(
+    days: int = 30,
+    user=Depends(get_admin_user)
+):
+    """Get moderator performance metrics"""
+    from_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    
+    pipeline = [
+        {"$match": {"timestamp": {"$gte": from_date}, "moderator_id": {"$exists": True}}},
+        {"$group": {
+            "_id": "$moderator_id",
+            "total_actions": {"$sum": 1},
+            "actions_by_type": {"$push": "$action"}
+        }}
+    ]
+    
+    moderator_stats = await db.audit_logs.aggregate(pipeline).to_list(100)
+    
+    # Enrich with user data
+    enriched = []
+    for stat in moderator_stats:
+        user_data = await db.users.find_one({"user_id": stat["_id"]}, {"_id": 0, "name": 1, "email": 1})
+        action_counts = {}
+        for action in stat.get("actions_by_type", []):
+            action_counts[action] = action_counts.get(action, 0) + 1
+        
+        enriched.append({
+            "moderator_id": stat["_id"],
+            "name": user_data.get("name", "Unknown") if user_data else "Unknown",
+            "email": user_data.get("email", "") if user_data else "",
+            "total_actions": stat["total_actions"],
+            "action_breakdown": action_counts
+        })
+    
+    return {"moderators": enriched, "period_days": days}
+
+@analytics_router.get("/hitl/export")
+async def export_hitl_data(
+    days: int = 30,
+    format: str = "json",
+    user=Depends(get_admin_user)
+):
+    """Export HITL data for analysis"""
+    from_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    
+    # Get all data
+    assessments = await db.risk_assessments.find(
+        {"created_at": {"$gte": from_date}},
+        {"_id": 0}
+    ).to_list(10000)
+    
+    queue_items = await db.moderation_queue.find(
+        {"created_at": {"$gte": from_date}},
+        {"_id": 0}
+    ).to_list(10000)
+    
+    audit_logs = await db.audit_logs.find(
+        {"timestamp": {"$gte": from_date}},
+        {"_id": 0}
+    ).to_list(10000)
+    
+    export_data = {
+        "export_date": datetime.now(timezone.utc).isoformat(),
+        "period_days": days,
+        "risk_assessments": assessments,
+        "moderation_queue": queue_items,
+        "audit_logs": audit_logs,
+        "summary": {
+            "total_assessments": len(assessments),
+            "total_queue_items": len(queue_items),
+            "total_audit_logs": len(audit_logs)
+        }
+    }
+    
+    if format == "csv":
+        # Convert to CSV format for assessments
+        import csv
+        import io
+        
+        output = io.StringIO()
+        if assessments:
+            writer = csv.DictWriter(output, fieldnames=assessments[0].keys())
+            writer.writeheader()
+            writer.writerows(assessments)
+        
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=hitl_export_{days}d.csv"}
+        )
+    
+    return export_data
+
 # ==================== APP SETUP ====================
 
 @app.on_event("startup")
 async def startup_event():
-    await seed_admin_user()
-    # Seed questions for all series
-    for series in ["family", "business", "friendship", "couples"]:
-        count = await db.questions.count_documents({"series": series})
-        if count == 0:
-            await seed_questions_for_series(series)
-            logger.info(f"Seeded questions for {series}")
+    """Initialize application - with error handling for production"""
+    import time
+    start_time = time.time()
+    logger.info("Starting application initialization...")
+    
+    try:
+        # Test MongoDB connection first with timeout
+        logger.info("Testing MongoDB connection...")
+        await db.command("ping")
+        logger.info(f"MongoDB connection successful (took {time.time() - start_time:.2f}s)")
+        
+        # Seed admin user (with timeout protection)
+        logger.info("Seeding admin user...")
+        await seed_admin_user()
+        logger.info(f"Admin user ready (took {time.time() - start_time:.2f}s)")
+        
+        # Seed questions for all series (non-blocking)
+        logger.info("Checking questions data...")
+        for series in ["family", "business", "friendship", "couples"]:
+            try:
+                count = await db.questions.count_documents({"series": series})
+                if count == 0:
+                    await seed_questions_for_series(series)
+                    logger.info(f"Seeded questions for {series}")
+            except Exception as e:
+                logger.warning(f"Could not seed {series} questions: {e}")
+        
+        logger.info(f"Application startup complete (total: {time.time() - start_time:.2f}s)")
+        
+    except Exception as e:
+        logger.warning(f"Startup initialization warning (non-fatal): {e}")
+        # Don't crash the app if seeding fails - it can be done later
+        # Don't crash the app if seeding fails - it can be done later
 
 @api_router.get("/")
 async def root():
@@ -4636,16 +7028,10 @@ api_router.include_router(challenge_router)
 api_router.include_router(blog_router)
 api_router.include_router(compatibility_router)
 api_router.include_router(tips_router)
+api_router.include_router(deep_dive_router)
+api_router.include_router(analytics_router)
 
 app.include_router(api_router)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

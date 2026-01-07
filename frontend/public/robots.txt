@@ -1,0 +1,15 @@
+# Robots.txt for Relasi4Warna
+# https://relasi4warna.com
+
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /checkout
+Disallow: /dashboard
+Disallow: /api/
+
+# Sitemap location
+Sitemap: https://relasi4warna.com/sitemap.xml
+
+# Crawl-delay for respectful crawling
+Crawl-delay: 1

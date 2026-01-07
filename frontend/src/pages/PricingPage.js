@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useLanguage, useAuth } from "../App";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { ArrowLeft, ArrowRight, Check, Globe } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Globe, Crown, Sparkles } from "lucide-react";
 
 const Header = () => {
   const { t, language, toggleLanguage } = useLanguage();
@@ -148,6 +148,80 @@ const PRICING_PLANS = [
   }
 ];
 
+const ELITE_PLANS = [
+  {
+    id: "elite_single",
+    name_id: "Elite Report",
+    name_en: "Elite Report",
+    price_idr: 299000,
+    price_usd: 19.99,
+    description_id: "Akses modul spesialis sekali pakai",
+    description_en: "One-time access to specialist modules",
+    features_id: [
+      "Semua fitur Laporan Lengkap",
+      "Modul Parent-Child Dynamics",
+      "Modul Business & Leadership",
+      "Modul Team Dynamics",
+      "Modul Quarterly Calibration"
+    ],
+    features_en: [
+      "All Full Report features",
+      "Parent-Child Dynamics module",
+      "Business & Leadership module",
+      "Team Dynamics module",
+      "Quarterly Calibration module"
+    ],
+    tier: "elite"
+  },
+  {
+    id: "elite_monthly",
+    name_id: "Elite Bulanan",
+    name_en: "Elite Monthly",
+    price_idr: 499000,
+    price_usd: 34.99,
+    description_id: "Akses bulanan semua modul Elite",
+    description_en: "Monthly access to all Elite modules",
+    features_id: [
+      "Unlimited Elite Reports",
+      "Semua modul spesialis",
+      "Priority support",
+      "Laporan baru setiap bulan"
+    ],
+    features_en: [
+      "Unlimited Elite Reports",
+      "All specialist modules",
+      "Priority support",
+      "New reports every month"
+    ],
+    tier: "elite",
+    popular: true
+  },
+  {
+    id: "elite_plus_monthly",
+    name_id: "Elite+ Program",
+    name_en: "Elite+ Program",
+    price_idr: 999000,
+    price_usd: 69.99,
+    description_id: "Termasuk sertifikasi & coaching",
+    description_en: "Includes certification & coaching",
+    features_id: [
+      "Semua fitur Elite",
+      "Program Sertifikasi Level 1-4",
+      "AI-Human Hybrid Coaching",
+      "Governance Dashboard",
+      "Certificate of Completion"
+    ],
+    features_en: [
+      "All Elite features",
+      "Certification Program Level 1-4",
+      "AI-Human Hybrid Coaching",
+      "Governance Dashboard",
+      "Certificate of Completion"
+    ],
+    tier: "elite_plus"
+  }
+];
+
 const PricingPage = () => {
   const { t, language } = useLanguage();
   const navigate = useNavigate();
@@ -243,6 +317,82 @@ const PricingPage = () => {
             <Button variant="outline" onClick={() => navigate("/faq")} className="rounded-full" data-testid="faq-link">
               {t("Lihat FAQ", "View FAQ")}
             </Button>
+          </div>
+
+          {/* Elite Tier Section */}
+          <div className="mt-20 pt-12 border-t">
+            <div className="text-center mb-12 animate-slide-up">
+              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-amber-500/20 mb-4">
+                <Crown className="w-5 h-5 text-amber-500" />
+                <span className="font-medium text-amber-600">{t("Tier Premium", "Premium Tier")}</span>
+              </div>
+              <h2 className="heading-2 text-foreground mb-4">
+                {t("Elite & Elite+ Program", "Elite & Elite+ Program")}
+              </h2>
+              <p className="body-lg text-muted-foreground max-w-2xl mx-auto">
+                {t(
+                  "Dapatkan akses ke modul-modul spesialis dan program sertifikasi untuk insight yang lebih mendalam.",
+                  "Get access to specialist modules and certification programs for deeper insights."
+                )}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {ELITE_PLANS.map((plan, idx) => (
+                <Card 
+                  key={plan.id}
+                  className={`relative card-hover animate-slide-up ${plan.popular ? 'border-amber-500 border-2' : 'border-amber-500/30'}`}
+                  data-testid={`pricing-${plan.id}`}
+                >
+                  {plan.popular && (
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                      <span className="bg-gradient-to-r from-amber-500 to-orange-500 text-white text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">
+                        <Sparkles className="w-3 h-3" />
+                        {t("REKOMENDASI", "RECOMMENDED")}
+                      </span>
+                    </div>
+                  )}
+                  <CardHeader className="text-center pt-8">
+                    <div className="flex items-center justify-center gap-2 mb-2">
+                      <Crown className="w-5 h-5 text-amber-500" />
+                      <CardTitle className="text-xl">
+                        {language === "id" ? plan.name_id : plan.name_en}
+                      </CardTitle>
+                    </div>
+                    <div className="mb-2">
+                      <span className="text-3xl font-bold text-foreground">
+                        {formatPrice(plan.price_idr, plan.price_usd)}
+                      </span>
+                      {plan.id.includes('monthly') && (
+                        <span className="text-sm text-muted-foreground">/{t("bulan", "month")}</span>
+                      )}
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-2">
+                      {language === "id" ? plan.description_id : plan.description_en}
+                    </p>
+                  </CardHeader>
+                  <CardContent>
+                    <ul className="space-y-3 mb-6">
+                      {(language === "id" ? plan.features_id : plan.features_en).map((feature, fIdx) => (
+                        <li key={fIdx} className="flex items-start gap-2 text-sm text-muted-foreground">
+                          <Check className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                          <span>{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <Button 
+                      className={`w-full ${plan.popular ? 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white' : ''}`}
+                      variant={plan.popular ? "default" : "outline"}
+                      onClick={() => navigate("/series")}
+                      data-testid={`select-${plan.id}`}
+                    >
+                      {t("Mulai Sekarang", "Get Started")}
+                      <ArrowRight className="w-4 h-4 ml-2" />
+                    </Button>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
           </div>
         </div>
       </main>
