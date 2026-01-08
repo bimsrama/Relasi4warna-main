@@ -17,9 +17,7 @@ load_dotenv(ROOT_DIR / '.env')
 # Create the main app IMMEDIATELY
 app = FastAPI(title="Relasi4Warna API")
 
-# Add CORS middleware
-# FIXED: Menggunakan allow_origin_regex atau list spesifik
-# Wildcard ["*"] TIDAK BOLEH dipakai jika allow_credentials=True
+# --- UPDATE BAGIAN INI DI server.py ---
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -28,15 +26,15 @@ app.add_middleware(
         "https://relasi4warna.com",
         "http://www.relasi4warna.com",
         "https://www.relasi4warna.com",
-        "http://72.62.125.135",      # IP VPS Anda
-        "http://localhost:3000",     # Untuk development lokal
+        "http://72.62.125.135",        # <-- IP VPS ANDA (Wajib ada jika buka via IP)
         "http://localhost",
+        "http://localhost:3000",
+        "http://localhost:80",
     ],
-    # Tambahkan regex ini sebagai cadangan agar aman untuk semua subdomain http/https
-    allow_origin_regex="https?://.*", 
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# --------------------------------------
 
 # Health endpoint MUST be registered before any other imports
 @app.get("/health", tags=["health"])
