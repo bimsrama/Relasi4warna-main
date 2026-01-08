@@ -1,28 +1,26 @@
-# Gunakan Python versi ringan
 FROM python:3.11-slim
 
-# Set folder kerja di dalam container
 WORKDIR /app
 
-# 1. Install Dependencies Umum
-# Copy file requirements.txt dari folder backend ke dalam container
+# 1. Install Requirements
 COPY backend/requirements.txt .
-
-# Install library dari internet (FastAPI, Uvicorn, dll)
-# PENTING: Pastikan 'emergentintegrations' SUDAH DIHAPUS dari requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 2. Copy Library Lokal (emergentintegrations)
-# Kita copy folder 'packages' dari repository ke dalam container
-COPY packages/ ./packages/
+# 2. COPY LIBRARY LOKAL (Bagian Kritis)
+# Copy folder packages dari host ke /app/packages di container
+COPY packages/ /app/packages/
 
-# 3. Copy Source Code Backend
-COPY backend/ ./backend/
+# 3. DEBUGGING (Cek apakah file benar-benar masuk)
+# Perintah ini akan menampilkan isi folder di log build GitHub Actions
+RUN echo "=== CEK ISI FOLDER PACKAGES ===" && ls -R /app/packages
 
-# 4. Setting Environment Variable
-# Ini agar Python tahu kalau ada library tambahan di folder packages
-ENV PYTHONPATH=/app:/app/packages
+# 4. Copy Backend
+COPY backend/ /app/backend/
 
-# 5. Jalankan Server
+# 5. Set PYTHONPATH
+# Kita tambahkan /app/packages agar Python bisa menemukan 'emergentintegrations'
+ENV PYTHONPATH=/app/packages:/app:/app/backend
+
+# 6. Jalankan
 WORKDIR /app/backend
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001"]
