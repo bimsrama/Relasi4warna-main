@@ -39,11 +39,17 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.frontend
       args:
-        - REACT_APP_BACKEND_URL=${REACT_APP_BACKEND_URL:-http://localhost:8001}
+        # --- PERUBAHAN ADA DI SINI ---
+        # Ganti ke domain utama (http://relasi4warna.com) tanpa port :8001
+        # Agar request masuk lewat Nginx (Port 80) dan tidak diblokir firewall
+        - REACT_APP_BACKEND_URL=${REACT_APP_BACKEND_URL:-http://relasi4warna.com}
     container_name: relasi-frontend
     restart: unless-stopped
     ports:
-      - "3000:80"
+      # Pastikan di VPS port ini 80:80.
+      # Kalau di file Anda tertulis 3000:80, nanti aksesnya jadi relasi4warna.com:3000
+      # Saya ubah jadi 80:80 agar bisa diakses langsung via domain
+      - "80:80"
     depends_on:
       backend:
         condition: service_healthy
