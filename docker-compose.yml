@@ -1,55 +1,102 @@
-# Relasi4Warna - Docker Compose
-# Production-ready deployment configuration
+# ===========================================
+# Relasi4Warna - Docker Compose for VPS
+# ===========================================
+# Deploy: docker compose up -d
+# ===========================================
 
 version: '3.8'
 
 services:
+  # ===========================================
+  # MongoDB Database
+  # ===========================================
+  mongo:
+    image: mongo:6
+    container_name: relasi-mongo
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - relasi-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ===========================================
+  # Backend API Service
+  # ===========================================
   backend:
     build:
       context: .
-      dockerfile: infra/docker/Dockerfile.backend
+      dockerfile: Dockerfile
+      target: backend
     container_name: relasi-backend
-    restart: unless-stopped
-    environment:
-      - MONGO_URL=${MONGO_URL}
-      - DB_NAME=${DB_NAME:-relasi4warna}
-      - JWT_SECRET=${JWT_SECRET}
-      - EMERGENT_LLM_KEY=${EMERGENT_LLM_KEY}
-      - MIDTRANS_SERVER_KEY=${MIDTRANS_SERVER_KEY}
-      - MIDTRANS_CLIENT_KEY=${MIDTRANS_CLIENT_KEY}
-      - RESEND_API_KEY=${RESEND_API_KEY:-}
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
-      - PYTHONPATH=/app:/app/packages
+    restart: always
     ports:
       - "8001:8001"
+    environment:
+      - MONGO_URL=mongodb://mongo:27017/relasi4warna
+      - DB_NAME=relasi4warna
+      - JWT_SECRET=relasi4warna_jwt_secret_key_2024
+      - EMERGENT_LLM_KEY=sk-emergent-2FdD6F844938b4aC19
+      - MIDTRANS_SERVER_KEY=SB-Mid-server-GwUP_WGbJPXsDzsNEBRs8IYA
+      - MIDTRANS_CLIENT_KEY=SB-Mid-client-61XuGAwQ8Bj8LxSS
+      - MIDTRANS_IS_PRODUCTION=false
+      - RESEND_API_KEY=
+      - GOOGLE_CLIENT_ID=
+      - GOOGLE_CLIENT_SECRET=
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      mongo:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 40s
     networks:
       - relasi-network
-    volumes:
-      - ./packages:/app/packages:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
+  # ===========================================
+  # Frontend Web Service
+  # ===========================================
   frontend:
     build:
       context: .
-      dockerfile: infra/docker/Dockerfile.frontend
+      dockerfile: Dockerfile
+      target: frontend
       args:
+<<<<<<< Updated upstream
         # --- PERUBAHAN ADA DI SINI ---
         # Ganti ke domain utama (http://relasi4warna.com) tanpa port :8001
         # Agar request masuk lewat Nginx (Port 80) dan tidak diblokir firewall
         - REACT_APP_BACKEND_URL=${REACT_APP_BACKEND_URL:-http://relasi4warna.com}
+=======
+        - REACT_APP_BACKEND_URL=http://localhost:8001
+>>>>>>> Stashed changes
     container_name: relasi-frontend
-    restart: unless-stopped
+    restart: always
     ports:
+<<<<<<< Updated upstream
       # Pastikan di VPS port ini 80:80.
       # Kalau di file Anda tertulis 3000:80, nanti aksesnya jadi relasi4warna.com:3000
       # Saya ubah jadi 80:80 agar bisa diakses langsung via domain
       - "80:80"
+=======
+      - "80:80"
+      - "443:443"
+>>>>>>> Stashed changes
     depends_on:
       backend:
         condition: service_healthy
@@ -60,6 +107,11 @@ services:
       retries: 3
     networks:
       - relasi-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   relasi-network:

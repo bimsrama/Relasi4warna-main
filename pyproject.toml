@@ -1,0 +1,86 @@
+# ===========================================
+# Relasi4Warna - Monorepo Configuration
+# ===========================================
+
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "relasi4warna"
+version = "2.0.0"
+description = "Human Relationship Intelligence Platform"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "Proprietary"}
+authors = [
+    {name = "Relasi4Warna Team", email = "team@relasi4warna.com"}
+]
+keywords = ["personality", "communication", "relationships", "ai"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["packages*", "backend*"]
+
+[tool.setuptools.package-dir]
+"" = "."
+
+# ===========================================
+# Python Path Configuration
+# ===========================================
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+# ===========================================
+# Code Quality Tools
+# ===========================================
+[tool.black]
+line-length = 100
+target-version = ['py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+  | node_modules
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+known_first_party = ["packages", "backend"]
+sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = [
+    "node_modules",
+    "frontend",
+    "tests"
+]
+
+# ===========================================
+# Ruff Linter Configuration
+# ===========================================
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]  # Line too long - handled by formatter
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]  # Allow assert in tests

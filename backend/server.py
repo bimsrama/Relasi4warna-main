@@ -1,18 +1,28 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
-from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 import os
+import sys
 import logging
 from pathlib import Path
 
 # ===========================================
-# CRITICAL: Create app and health endpoint FIRST
-# Before any heavy imports to ensure /health is available immediately
+# CRITICAL: Setup Python path for packages
 # ===========================================
-
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+APP_ROOT = ROOT_DIR.parent
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
+
+# ===========================================
+# Load configuration from centralized config
+# ===========================================
+from config import (
+    MONGO_URL, DB_NAME, JWT_SECRET, JWT_ALGORITHM, JWT_EXPIRATION_HOURS,
+    MIDTRANS_SERVER_KEY, MIDTRANS_CLIENT_KEY, MIDTRANS_IS_PRODUCTION,
+    RESEND_API_KEY, SENDER_EMAIL, EMERGENT_LLM_KEY, APP_URL, EMERGENT_AUTH_URL,
+    FORGOT_PASSWORD_RATE_LIMIT, FORGOT_PASSWORD_RATE_WINDOW
+)
 
 # Create the main app IMMEDIATELY
 app = FastAPI(title="Relasi4Warna API")
@@ -78,64 +88,24 @@ from hitl_engine import (
     process_ai_output_with_hitl, SAFETY_BUFFER, SAFE_RESPONSE
 )
 
-# MongoDB connection with proper settings for Atlas
-mongo_url = os.environ['MONGO_URL']
+# ===========================================
+# Import from packages (monorepo structure)
+# ===========================================
+from packages.shared.constants import ARCHETYPES as SHARED_ARCHETYPES, TIER_FEATURES, PRODUCTS as SHARED_PRODUCTS
+from packages.shared.types import UserTier, Series, Language
+from packages.shared.utils import generate_id, format_datetime, sanitize_string
+from packages.core.scoring import calculate_archetype_scores, get_balance_index, determine_types
+from packages.core.profile_generator import generate_profile_summary, get_archetype_traits
 
-# Configure MongoDB client with connection options suitable for production
-client = AsyncIOMotorClient(
-    mongo_url,
-    serverSelectionTimeoutMS=5000,  # 5 second timeout for server selection
-    connectTimeoutMS=10000,  # 10 second connection timeout
-    socketTimeoutMS=20000,  # 20 second socket timeout
-    maxPoolSize=10,  # Limit connection pool
-    retryWrites=True,  # Enable retry for write operations
-)
-
-# Extract database name from MONGO_URL or use DB_NAME env var
-def get_database_name(mongo_url: str, default_db_name: str = None) -> str:
-    """Extract database name from MongoDB URL or use default"""
-    # Try to get from environment first
-    if default_db_name:
-        return default_db_name
-    
-    # Extract from MongoDB URL (format: mongodb+srv://user:pass@host/dbname?options)
-    try:
-        from urllib.parse import urlparse
-        parsed = urlparse(mongo_url)
-        if parsed.path and parsed.path != '/':
-            db_name = parsed.path.lstrip('/')
-            # Remove any query parameters that might be attached
-            if '?' in db_name:
-                db_name = db_name.split('?')[0]
-            if db_name:
-                return db_name
-    except Exception:
-        pass
-    
-    # Fallback to default
-    return "relasi4warna"
-
-db_name = get_database_name(mongo_url, os.environ.get('DB_NAME'))
-db = client[db_name]
+# ===========================================
+# Database Connection (centralized)
+# ===========================================
+from utils.database import db, client
 
 # Initialize HITL Engine
 hitl_engine = HITLEngine(db)
 
-# JWT Config
-JWT_SECRET = os.environ.get('JWT_SECRET', 'default_secret_key')
-JWT_ALGORITHM = "HS256"
-JWT_EXPIRATION_HOURS = 24 * 7  # 7 days
-
-# Xendit Config
-XENDIT_API_KEY = os.environ.get('XENDIT_API_KEY', '')
-XENDIT_WEBHOOK_TOKEN = os.environ.get('XENDIT_WEBHOOK_TOKEN', '')
-
-# Midtrans Config (replacing Xendit)
-MIDTRANS_SERVER_KEY = os.environ.get('MIDTRANS_SERVER_KEY', 'SB-Mid-server-YOUR_SERVER_KEY')
-MIDTRANS_CLIENT_KEY = os.environ.get('MIDTRANS_CLIENT_KEY', 'SB-Mid-client-YOUR_CLIENT_KEY')
-MIDTRANS_IS_PRODUCTION = os.environ.get('MIDTRANS_IS_PRODUCTION', 'False') == 'True'
-
-# Initialize Midtrans Snap
+# Initialize Midtrans Snap (uses config values)
 import midtransclient
 midtrans_snap = midtransclient.Snap(
     is_production=MIDTRANS_IS_PRODUCTION,
@@ -143,14 +113,9 @@ midtrans_snap = midtransclient.Snap(
     client_key=MIDTRANS_CLIENT_KEY
 )
 
-# Resend Config
-RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
-SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'noreply@relasi4warna.com')
+# Initialize Resend if configured
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
-
-# LLM Config
-EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 
 # Create routers (app already created at top of file)
 api_router = APIRouter(prefix="/api")
@@ -459,9 +424,7 @@ async def get_session(request: Request):
 
 # ==================== PASSWORD RESET ====================
 
-# Rate limiting configuration
-FORGOT_PASSWORD_RATE_LIMIT = 3  # max requests
-FORGOT_PASSWORD_RATE_WINDOW = 3600  # 1 hour in seconds
+# Rate limiting configuration imported from config.py
 
 class ForgotPasswordRequest(BaseModel):
     email: str
