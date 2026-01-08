@@ -22,7 +22,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: infra/docker/Dockerfile.backend  # Pastikan file ini ada di repo Anda
+          file: infra/docker/Dockerfile.backend
           push: true
           tags: bimsrama/relasi4warna:backend
 
@@ -31,9 +31,11 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: infra/docker/Dockerfile.frontend # Pastikan file ini ada di repo Anda
+          file: infra/docker/Dockerfile.frontend
           push: true
           tags: bimsrama/relasi4warna:frontend
-          # Masukkan URL Backend VPS Anda di sini agar frontend tahu mau nembak kemana
+          # --- PERUBAHAN ADA DI SINI ---
+          # Hapus :8001 agar frontend menembak ke Nginx (Port 80)
+          # Nginx yang akan meneruskan ke backend secara internal
           build-args: |
-            REACT_APP_BACKEND_URL=http://relasi4warna.com:8001
+            REACT_APP_BACKEND_URL=http://relasi4warna.com
