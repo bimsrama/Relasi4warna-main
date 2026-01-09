@@ -9,38 +9,62 @@ const AuthCallback = () => {
   const hasProcessed = useRef(false);
 
   useEffect(() => {
-    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+    // Prevent double execution in React Strict Mode
     if (hasProcessed.current) return;
     hasProcessed.current = true;
 
     const processAuth = async () => {
       try {
-        // Extract session_id from URL fragment
+        // 1. Ambil Parameter dari URL Hash (#)
         const hash = window.location.hash;
         const params = new URLSearchParams(hash.replace('#', ''));
+        
+        // Cek dua tipe token:
+        // - access_token: Format Baru (Google OAuth dari Server Sendiri)
+        // - session_id: Format Lama (Emergent Auth)
+        const accessToken = params.get('access_token');
         const sessionId = params.get('session_id');
 
-        if (!sessionId) {
-          console.error("No session_id found");
-          navigate('/login');
+        // --- SKENARIO 1: Token Langsung (Google Login Baru) ---
+        if (accessToken) {
+          console.log("Processing Google Access Token...");
+          
+          // Token sudah valid JWT dari backend, tidak perlu ditukar lagi.
+          // Kita pass object kosong {} sebagai user data sementara.
+          // AuthProvider di App.js akan otomatis mendeteksi token berubah
+          // dan melakukan fetch ke /auth/me untuk mengisi data user lengkap.
+          loginWithSession(accessToken, {});
+          
+          navigate('/dashboard', { replace: true });
           return;
         }
 
-        // Exchange session_id for session data
-        const response = await axios.get(`${API}/auth/session`, {
-          headers: { 'X-Session-ID': sessionId }
-        });
+        // --- SKENARIO 2: Session ID (Flow Lama) ---
+        if (sessionId) {
+          console.log("Processing Session ID...");
+          
+          // Tukar session_id dengan token asli ke backend
+          const response = await axios.get(`${API}/auth/session`, {
+            headers: { 'X-Session-ID': sessionId }
+          });
 
-        const { session_token, user_id, email, name } = response.data;
+          const { session_token, user_id, email, name } = response.data;
 
-        // Login with session
-        loginWithSession(session_token, { user_id, email, name });
+          // Login dan simpan
+          loginWithSession(session_token, { user_id, email, name });
 
-        // Navigate to dashboard
-        navigate('/dashboard', { replace: true });
+          navigate('/dashboard', { replace: true });
+          return;
+        }
+
+        // --- Jika Tidak Ada Token Sama Sekali ---
+        console.error("No access_token or session_id found");
+        navigate('/login');
+
       } catch (error) {
         console.error("Auth callback error:", error);
-        navigate('/login');
+        // Beri sedikit delay sebelum redirect agar user sempat melihat error di console jika perlu
+        setTimeout(() => navigate('/login'), 1000);
       }
     };
 
