@@ -1,63 +1,43 @@
 # ===========================================
-# Relasi4Warna Frontend Dockerfile (Standalone)
-# ===========================================
-# Build: docker build -f infra/docker/Dockerfile.frontend -t relasi-frontend \
-#        --build-arg REACT_APP_BACKEND_URL=https://api.yourdomain.com .
+# Relasi4Warna Frontend Dockerfile (SUBFOLDER STRUCTURE)
 # ===========================================
 
-# Stage 1: Build
+# --- Stage 1: Build React App ---
 FROM node:18-alpine AS builder
 
 WORKDIR /app
 
-# [UBAH] Copy package.json dan package-lock.json (bukan yarn.lock)
-COPY frontend/package.json frontend/package-lock.json ./
+# 1. Copy package files DARI FOLDER FRONTEND
+COPY frontend/package*.json ./
 
-# [UBAH] Install dependencies menggunakan npm ci
-# npm ci adalah pengganti yang lebih cepat & tepat untuk 'yarn install --frozen-lockfile'
-RUN npm ci
+# 2. Install Dependencies
+RUN npm install --legacy-peer-deps
+RUN npm install ajv@8 --save-dev --legacy-peer-deps
 
-# Copy source code (Tetap menggunakan folder frontend/)
-COPY frontend/ ./
+# 3. Copy seluruh source code DARI FOLDER FRONTEND
+COPY frontend/ .
 
-# Build argument for backend URL (REQUIRED)
+# 4. Build Argument
 ARG REACT_APP_BACKEND_URL
 ENV REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL
 
-# Disable CI mode to allow warnings
-ENV CI=false
-
-# [UBAH] Build production bundle
+# 5. Build Aplikasi
 RUN npm run build
 
-# Stage 2: Production
+# --- Stage 2: Serve dengan Nginx ---
 FROM nginx:alpine
 
-# Install curl for health check
 RUN apk add --no-cache curl
 
-# Remove default nginx config
-RUN rm /etc/nginx/conf.d/default.conf
-
-# Copy custom nginx config
-COPY infra/docker/nginx.conf /etc/nginx/conf.d/default.conf
-
-# Copy built assets from builder
+# Copy hasil build
 COPY --from=builder /app/build /usr/share/nginx/html
 
-# Set proper permissions
-RUN chown -R nginx:nginx /usr/share/nginx/html \
-    && chown -R nginx:nginx /var/cache/nginx \
-    && chown -R nginx:nginx /var/log/nginx \
-    && touch /var/run/nginx.pid \
-    && chown -R nginx:nginx /var/run/nginx.pid
+# Copy config nginx
+COPY infra/docker/nginx.conf /etc/nginx/conf.d/default.conf
 
-# Health check (Tetap diarahkan ke /health sesuai file lama)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:80/health || exit 1
+    CMD curl -f http://localhost/health || exit 1
 
-# Expose ports
-EXPOSE 80 443
+EXPOSE 80
 
-# Start nginx
 CMD ["nginx", "-g", "daemon off;"]
