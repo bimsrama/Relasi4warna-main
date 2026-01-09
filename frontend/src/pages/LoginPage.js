@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { useLanguage, useAuth, API } from "../App"; // Import API dari App.js
+import { useLanguage, useAuth, API } from "../App"; // PERBAIKAN: Import API ditambahkan
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Input } from "../components/ui/input";
@@ -30,9 +30,7 @@ const LoginPage = () => {
   };
 
   const handleGoogleLogin = () => {
-    // --- PERBAIKAN: Menggunakan Backend Sendiri ---
-    // Jangan redirect ke auth.emergentagent.com lagi.
-    // Redirect ke endpoint backend kita yang akan mengurus ke Google.
+    // PERBAIKAN UTAMA: Mengarah ke backend sendiri, bukan emergentagent
     window.location.href = `${API}/auth/google/login`;
   };
 
