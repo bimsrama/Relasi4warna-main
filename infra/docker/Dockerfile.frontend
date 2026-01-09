@@ -1,5 +1,5 @@
 # ===========================================
-# Relasi4Warna Frontend Dockerfile (Monorepo)
+# Relasi4Warna Frontend Dockerfile (Standalone)
 # ===========================================
 # Build: docker build -f infra/docker/Dockerfile.frontend -t relasi-frontend \
 #        --build-arg REACT_APP_BACKEND_URL=https://api.yourdomain.com .
@@ -10,14 +10,15 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files from monorepo location
-COPY apps/web/package.json apps/web/yarn.lock ./
+# [UBAH] Copy package.json dan package-lock.json (bukan yarn.lock)
+COPY frontend/package.json frontend/package-lock.json ./
 
-# Install dependencies
-RUN yarn install --frozen-lockfile --network-timeout 100000
+# [UBAH] Install dependencies menggunakan npm ci
+# npm ci adalah pengganti yang lebih cepat & tepat untuk 'yarn install --frozen-lockfile'
+RUN npm ci
 
-# Copy source code
-COPY apps/web/ ./
+# Copy source code (Tetap menggunakan folder frontend/)
+COPY frontend/ ./
 
 # Build argument for backend URL (REQUIRED)
 ARG REACT_APP_BACKEND_URL
@@ -26,8 +27,8 @@ ENV REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL
 # Disable CI mode to allow warnings
 ENV CI=false
 
-# Build production bundle
-RUN yarn build
+# [UBAH] Build production bundle
+RUN npm run build
 
 # Stage 2: Production
 FROM nginx:alpine
@@ -51,9 +52,9 @@ RUN chown -R nginx:nginx /usr/share/nginx/html \
     && touch /var/run/nginx.pid \
     && chown -R nginx:nginx /var/run/nginx.pid
 
-# Health check
+# Health check (Tetap diarahkan ke /health sesuai file lama)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:80/ || exit 1
+    CMD curl -f http://localhost:80/health || exit 1
 
 # Expose ports
 EXPOSE 80 443
