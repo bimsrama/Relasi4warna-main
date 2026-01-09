@@ -394,14 +394,65 @@ async def get_me(user=Depends(get_current_user)):
         created_at=datetime.fromisoformat(user["created_at"]) if isinstance(user["created_at"], str) else user["created_at"]
     )
 
+# ==================== AUTH METHODS ====================
+
 @auth_router.get("/session")
 async def get_session(request: Request):
+    """
+    LEGACY: Fetch session data from Emergent Auth
+    Used for compatibility with old auth system
+    """
     session_id = request.headers.get("X-Session-ID")
     if not session_id:
         raise HTTPException(status_code=401, detail="No session ID")
 
-    # ===========================================
-# GOOGLE OAUTH HANDLERS (TAMBAHAN BARU)
+    # Fetch session data from Emergent Auth
+    emergent_auth_url = os.environ.get('EMERGENT_AUTH_URL', 'https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data')
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            emergent_auth_url,
+            headers={"X-Session-ID": session_id}
+        )
+        if response.status_code != 200:
+            raise HTTPException(status_code=401, detail="Invalid session")
+        
+        session_data = response.json()
+        email = session_data.get("email")
+        name = session_data.get("name", "")
+        
+        # Find or create user
+        user = await db.users.find_one({"email": email}, {"_id": 0})
+        if not user:
+            user_id = f"user_{uuid.uuid4().hex[:12]}"
+            user = {
+                "user_id": user_id,
+                "email": email,
+                "name": name,
+                "password_hash": "",
+                "language": "id",
+                "is_admin": False,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+            await db.users.insert_one(user)
+        
+        # Create session token
+        session_token = f"session_{uuid.uuid4().hex}"
+        await db.user_sessions.insert_one({
+            "user_id": user["user_id"],
+            "session_token": session_token,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+        
+        return {
+            "user_id": user["user_id"],
+            "email": email,
+            "name": name,
+            "session_token": session_token
+        }
+
+# ===========================================
+# GOOGLE OAUTH HANDLERS (STANDARD)
 # ===========================================
 
 @auth_router.get("/google/login")
@@ -504,51 +555,6 @@ async def google_callback(code: str):
         # 5. Redirect kembali ke Frontend
         # Frontend akan membaca token dari URL hash
         return RedirectResponse(f"{app_url}/auth/callback#access_token={app_token}")
-    
-    # Fetch session data from Emergent Auth
-    emergent_auth_url = os.environ.get('EMERGENT_AUTH_URL', 'https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data')
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            emergent_auth_url,
-            headers={"X-Session-ID": session_id}
-        )
-        if response.status_code != 200:
-            raise HTTPException(status_code=401, detail="Invalid session")
-        
-        session_data = response.json()
-        email = session_data.get("email")
-        name = session_data.get("name", "")
-        
-        # Find or create user
-        user = await db.users.find_one({"email": email}, {"_id": 0})
-        if not user:
-            user_id = f"user_{uuid.uuid4().hex[:12]}"
-            user = {
-                "user_id": user_id,
-                "email": email,
-                "name": name,
-                "password_hash": "",
-                "language": "id",
-                "is_admin": False,
-                "created_at": datetime.now(timezone.utc).isoformat()
-            }
-            await db.users.insert_one(user)
-        
-        # Create session token
-        session_token = f"session_{uuid.uuid4().hex}"
-        await db.user_sessions.insert_one({
-            "user_id": user["user_id"],
-            "session_token": session_token,
-            "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
-        
-        return {
-            "user_id": user["user_id"],
-            "email": email,
-            "name": name,
-            "session_token": session_token
-        }
 
 # ==================== PASSWORD RESET ====================
 
