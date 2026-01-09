@@ -1,5 +1,5 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 import os
@@ -399,6 +399,111 @@ async def get_session(request: Request):
     session_id = request.headers.get("X-Session-ID")
     if not session_id:
         raise HTTPException(status_code=401, detail="No session ID")
+
+    # ===========================================
+# GOOGLE OAUTH HANDLERS (TAMBAHAN BARU)
+# ===========================================
+
+@auth_router.get("/google/login")
+async def login_google():
+    """Redirect user to Google for authentication"""
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    if not client_id:
+        raise HTTPException(status_code=500, detail="Google Client ID not configured")
+    
+    # URL Redirect Google (Wajib sama persis dengan di Google Console)
+    app_url = os.environ.get('APP_URL', 'http://relasi4warna.com')
+    # Pastikan tidak ada slash di akhir APP_URL
+    if app_url.endswith('/'):
+        app_url = app_url[:-1]
+        
+    redirect_uri = f"{app_url}/api/auth/google/callback"
+    
+    scope = "openid email profile"
+    auth_url = (
+        f"https://accounts.google.com/o/oauth2/v2/auth?"
+        f"response_type=code&client_id={client_id}&redirect_uri={redirect_uri}&scope={scope}"
+    )
+    return RedirectResponse(auth_url)
+
+@auth_router.get("/google/callback")
+async def google_callback(code: str):
+    """Handle callback from Google"""
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    
+    app_url = os.environ.get('APP_URL', 'http://relasi4warna.com')
+    if app_url.endswith('/'):
+        app_url = app_url[:-1]
+        
+    redirect_uri = f"{app_url}/api/auth/google/callback"
+
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=500, detail="Google credentials not configured")
+
+    # 1. Exchange code for access token
+    token_url = "https://oauth2.googleapis.com/token"
+    data = {
+        "code": code,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code",
+    }
+
+    async with httpx.AsyncClient() as client:
+        # Tukar Code dengan Token
+        token_res = await client.post(token_url, data=data)
+        if token_res.status_code != 200:
+            logger.error(f"Google Token Error: {token_res.text}")
+            raise HTTPException(status_code=400, detail="Failed to get token from Google")
+        
+        token_data = token_res.json()
+        access_token = token_data.get("access_token")
+
+        # 2. Get User Info pakai Token tadi
+        user_info_res = await client.get(
+            "https://www.googleapis.com/oauth2/v1/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        if user_info_res.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to get user info from Google")
+        
+        user_info = user_info_res.json()
+        email = user_info.get("email")
+        name = user_info.get("name")
+        google_id = user_info.get("id")
+
+        # 3. Cari atau Buat User di Database
+        user = await db.users.find_one({"email": email})
+        
+        if not user:
+            # Register user baru
+            user_id = f"user_{uuid.uuid4().hex[:12]}"
+            new_user = {
+                "user_id": user_id,
+                "email": email,
+                "name": name,
+                "google_id": google_id, 
+                "password_hash": "", # Tidak ada password
+                "language": "id",
+                "is_admin": False,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "tier": "free"
+            }
+            await db.users.insert_one(new_user)
+            user = new_user
+        else:
+            # Update user lama agar punya google_id
+            if "google_id" not in user:
+                await db.users.update_one({"_id": user["_id"]}, {"$set": {"google_id": google_id}})
+
+        # 4. Buat JWT Token Session untuk aplikasi kita
+        app_token = create_token(user["user_id"], user["email"])
+
+        # 5. Redirect kembali ke Frontend
+        # Frontend akan membaca token dari URL hash
+        return RedirectResponse(f"{app_url}/auth/callback#access_token={app_token}")
     
     # Fetch session data from Emergent Auth
     emergent_auth_url = os.environ.get('EMERGENT_AUTH_URL', 'https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data')
