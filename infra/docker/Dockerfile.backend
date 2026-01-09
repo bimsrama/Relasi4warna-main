@@ -1,49 +1,28 @@
-# ===========================================
-# Relasi4Warna Backend Dockerfile (Monorepo)
-# ===========================================
-# Build: docker build -f infra/docker/Dockerfile.backend -t relasi-backend .
-# ===========================================
-
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# 1. Install System Dependencies (Biar aman)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libffi-dev \
-    curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    gcc libffi-dev curl && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy and install Python dependencies first (for better caching)
-COPY apps/api/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+# 2. Copy Requirements
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy packages (shared business logic)
-COPY packages/ ./packages/
+# 3. COPY SEMUA FOLDER PACKAGES (Kunci agar tidak ada yang tertinggal)
+COPY packages/ /app/packages/
 
-# Copy backend code from monorepo location
-COPY apps/api/ ./api/
+# 4. COPY SEMUA BACKEND
+COPY backend/ /app/backend/
 
-# Set Python path to include packages
-ENV PYTHONPATH=/app:/app/packages
+# 5. Set PYTHONPATH
+ENV PYTHONPATH=/app/packages:/app:/app/backend
 ENV PYTHONUNBUFFERED=1
 
-# Create non-root user for security
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
-USER appuser
+WORKDIR /app/backend
 
-# Health check endpoint
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8001/api/health || exit 1
-
-# Expose port
-EXPOSE 8001
-
-# Set working directory to api
-WORKDIR /app/api
-
-# Run with uvicorn (production settings)
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "2", "--loop", "uvloop", "--http", "httptools"]
+# 6. Jalankan
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001"]
