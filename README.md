@@ -1,158 +1,81 @@
-# Relasi4Warna - Human Relationship Intelligence Platform
+# Relasi4Warna - Relationship Communication Platform
 
-Platform asesmen kepribadian komunikasi dengan 4 arketipe: **Penggerak (Driver)**, **Percikan (Spark)**, **Jangkar (Anchor)**, dan **Analis (Analyst)**.
+A full-stack web platform for personality assessment and relationship communication analysis.
 
-## 🏗️ Arsitektur Monorepo
+## 🏗️ Project Structure (Monorepo)
 
 ```
 relasi4warna/
-├── backend/                 # FastAPI Backend API
-│   ├── config.py           # Centralized configuration
-│   ├── server.py           # Main application entry point
-│   ├── routes/             # API route modules
-│   ├── models/             # Pydantic schemas
-│   ├── services/           # Business logic services
-│   ├── utils/              # Utilities (auth, database)
-│   ├── hitl_engine.py      # HITL moderation system
-│   └── requirements.txt
-│
-├── frontend/               # React Frontend
-│   ├── src/
-│   │   ├── pages/         # Page components
-│   │   ├── components/    # UI components (shadcn)
-│   │   ├── hooks/         # Custom hooks
-│   │   └── lib/           # Utilities
-│   └── package.json
-│
-├── packages/               # Shared Business Logic (Monorepo Core)
-│   ├── core/              # Personality engine & scoring
-│   │   ├── personality_engine.py
-│   │   ├── scoring.py
-│   │   └── profile_generator.py
-│   ├── hitl/              # Human-in-the-Loop
-│   │   ├── risk_engine.py
-│   │   ├── moderation.py
-│   │   ├── safety.py
-│   │   └── keywords.py
-│   ├── governance/        # Policy & compliance
-│   │   ├── policy_engine.py
-│   │   ├── audit.py
-│   │   └── compliance.py
-│   └── shared/            # Shared types & constants
-│       ├── types.py
-│       ├── constants.py
-│       └── utils.py
-│
-├── infra/                  # Infrastructure
-│   └── docker/
-│       ├── Dockerfile.backend
-│       ├── Dockerfile.frontend
-│       └── nginx.conf
-│
-├── tests/                  # Test suites
-│   ├── backend/
-│   └── frontend/
-│
-├── docker-compose.yml      # Production deployment
-├── Dockerfile              # Multi-stage build
-├── pyproject.toml          # Python project config
-└── DEPLOYMENT.md           # Deployment guide
+├── apps/
+│   ├── api/          # FastAPI backend
+│   └── web/          # React frontend
+├── packages/
+│   ├── core/         # Core business logic
+│   ├── hitl/         # Human-in-the-Loop engine
+│   ├── governance/   # Governance & moderation
+│   └── shared/       # Shared utilities
+├── infra/
+│   └── docker/       # Docker configurations
+├── scripts/          # Build & deploy scripts
+└── tests/            # Test suites
 ```
 
 ## 🚀 Quick Start
 
-### Development Environment
+### Prerequisites
+- Node.js 18+
+- Python 3.11+
+- MongoDB
+- Yarn
+
+### Development
 
 ```bash
-# Backend
-cd backend
-pip install -r requirements.txt
-uvicorn server:app --reload --host 0.0.0.0 --port 8001
-
-# Frontend
-cd frontend
+# Install dependencies
 yarn install
-yarn start
+pip install -r apps/api/requirements.txt
+
+# Start development servers
+yarn dev
 ```
 
-### Production Deployment (Docker)
+### Production
 
 ```bash
-# Start all services
+# Using Docker Compose
 docker compose up -d
-
-# View logs
-docker compose logs -f
-
-# Stop services
-docker compose down
 ```
 
 ## 🔧 Configuration
 
-Environment variables are managed through `.env` files:
+### Environment Variables
 
-- `backend/.env` - Backend configuration
-- `frontend/.env` - Frontend configuration
+| Variable | Description | Location |
+|----------|-------------|----------|
+| MONGO_URL | MongoDB connection | apps/api/.env |
+| JWT_SECRET | JWT signing key | apps/api/.env |
+| EMERGENT_LLM_KEY | AI integration key | apps/api/.env |
+| MIDTRANS_SERVER_KEY | Payment server key | apps/api/.env |
+| MIDTRANS_CLIENT_KEY | Payment client key | apps/api/.env |
+| REACT_APP_BACKEND_URL | API URL for frontend | apps/web/.env |
 
-Key configurations:
-- `MONGO_URL` - MongoDB connection string
-- `JWT_SECRET` - JWT signing secret
-- `EMERGENT_LLM_KEY` - AI integration key
-- `MIDTRANS_*` - Payment gateway config
+## 📦 Features
 
-## 📦 Packages Overview
+- **4 Quiz Series**: Family, Couples, Business, Friendship
+- **AI Reports**: GPT-4o powered analysis
+- **Tier System**: Free, Premium, Elite, Elite+
+- **Payment**: Midtrans integration (Production)
+- **PDF Export**: Professional multi-chapter reports
+- **Admin CMS**: Question & user management
+- **HITL Moderation**: AI safety & governance
 
-### `packages/core`
-Core personality assessment logic:
-- `PersonalityEngine` - Quiz processing and scoring
-- `calculate_archetype_scores()` - Score calculation
-- `generate_profile_summary()` - Profile text generation
+## 🔒 Security
 
-### `packages/hitl`
-Human-in-the-Loop moderation:
-- 3-level risk system (Normal, Sensitive, Critical)
-- Automatic safety buffers
-- Moderation queue management
+- JWT authentication
+- HITL content moderation
+- PCI-DSS compliant payments (Midtrans)
+- Input validation & sanitization
 
-### `packages/shared`
-Shared resources:
-- Type definitions (`UserTier`, `Series`, `Archetype`)
-- Constants (`ARCHETYPES`, `TIER_FEATURES`)
-- Utility functions
+## 📄 License
 
-## 🧪 Testing
-
-```bash
-# Backend tests
-pytest tests/backend/
-
-# Frontend tests
-cd frontend && yarn test
-```
-
-## 📄 API Documentation
-
-When backend is running, access:
-- Swagger UI: `http://localhost:8001/docs`
-- ReDoc: `http://localhost:8001/redoc`
-
-## 🔐 User Tiers
-
-| Tier | Features |
-|------|----------|
-| Free | Basic quiz, primary archetype |
-| Premium | Full AI report, PDF download |
-| Elite | Advanced modules (Parent-Child, Business Leadership) |
-| Elite+ | Certification program, coaching model |
-
-## 📞 Support
-
-- Admin: `admin@relasi4warna.com`
-- Test credentials:
-  - User: `test@test.com` / `testpassword`
-  - Admin: `admin@relasi4warna.com` / `adminpassword`
-
----
-
-Built with ❤️ by Relasi4Warna Team
+© 2024 Relasi4Warna. All rights reserved.

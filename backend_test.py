@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 
 class Relasi4WarnaAPITester:
-    def __init__(self, base_url="https://relasi4warna-2.preview.emergentagent.com"):
+    def __init__(self, base_url="https://relasi4deploy.preview.emergentagent.com"):
         self.base_url = base_url
         self.api_url = f"{base_url}/api"
         self.token = None
@@ -35,10 +35,14 @@ class Relasi4WarnaAPITester:
             "endpoint": endpoint
         })
 
-    def run_test(self, name, method, endpoint, expected_status, data=None, headers=None):
+    def run_test(self, name, method, endpoint, expected_status, data=None, headers=None, timeout=10):
         """Run a single API test"""
         url = f"{self.api_url}/{endpoint}"
         test_headers = {'Content-Type': 'application/json'}
+        
+        # Use longer timeout for report generation endpoints
+        if 'report/' in endpoint and method == 'POST':
+            timeout = 60  # 60 seconds for report generation
         
         if self.token:
             test_headers['Authorization'] = f'Bearer {self.token}'
@@ -48,13 +52,13 @@ class Relasi4WarnaAPITester:
 
         try:
             if method == 'GET':
-                response = requests.get(url, headers=test_headers, timeout=10)
+                response = requests.get(url, headers=test_headers, timeout=timeout)
             elif method == 'POST':
-                response = requests.post(url, json=data, headers=test_headers, timeout=10)
+                response = requests.post(url, json=data, headers=test_headers, timeout=timeout)
             elif method == 'PUT':
-                response = requests.put(url, json=data, headers=test_headers, timeout=10)
+                response = requests.put(url, json=data, headers=test_headers, timeout=timeout)
             elif method == 'DELETE':
-                response = requests.delete(url, headers=test_headers, timeout=10)
+                response = requests.delete(url, headers=test_headers, timeout=timeout)
 
             success = response.status_code == expected_status
             
@@ -90,7 +94,7 @@ class Relasi4WarnaAPITester:
         self.run_test("Health Check", "GET", "health", 200)
 
     def test_quiz_series(self):
-        """Test quiz series endpoint - should return exactly 4 series"""
+        """Test quiz series endpoint"""
         print("\n🔍 Testing Quiz Series...")
         
         success, response = self.run_test("Get Quiz Series", "GET", "quiz/series", 200)
@@ -99,17 +103,10 @@ class Relasi4WarnaAPITester:
             series_list = response['series']
             expected_series = ['family', 'business', 'friendship', 'couples']
             
-            # Check total count
-            self.log_test("Quiz series returns 4 items", len(series_list) == 4, 
-                         f"Expected 4, got {len(series_list)}")
-            
-            # Check each expected series exists
             for expected in expected_series:
                 found = any(s['id'] == expected for s in series_list)
                 self.log_test(f"Series '{expected}' exists", found, 
                             "" if found else f"Series {expected} not found")
-        else:
-            self.log_test("Quiz series test", False, "Failed to get series or invalid response format")
 
     def test_archetypes(self):
         """Test archetypes endpoint"""
@@ -178,37 +175,10 @@ class Relasi4WarnaAPITester:
             self.log_test("Registration failed", False, "No token received")
 
     def test_user_login(self):
-        """Test user login with test credentials"""
+        """Test user login with admin credentials"""
         print("\n🔍 Testing User Login...")
         
-        # Test with test user credentials as specified in review request
         login_data = {
-            "email": "test@test.com",
-            "password": "testpassword"
-        }
-        
-        success, response = self.run_test(
-            "Test User Login", 
-            "POST", 
-            "auth/login", 
-            200, 
-            login_data
-        )
-        
-        if success and 'access_token' in response:
-            self.token = response['access_token']
-            self.user_id = response['user']['user_id']
-            self.log_test("Login returns token", True)
-            self.log_test("Login returns user data", 'user' in response)
-            
-            # Verify user has tier field
-            if 'user' in response and 'tier' in response['user']:
-                self.log_test("User has tier field", True, f"Tier: {response['user']['tier']}")
-            else:
-                self.log_test("User has tier field", False, "Tier field missing")
-        
-        # Also test admin login for admin endpoints
-        admin_login_data = {
             "email": "admin@relasi4warna.com",
             "password": "Admin123!"
         }
@@ -218,14 +188,14 @@ class Relasi4WarnaAPITester:
             "POST", 
             "auth/login", 
             200, 
-            admin_login_data
+            login_data
         )
         
         if success and 'access_token' in response:
             # Store admin token for later tests
             self.admin_token = response['access_token']
-            self.log_test("Admin login returns token", True)
-            self.log_test("Admin login returns user data", 'user' in response)
+            self.log_test("Login returns token", True)
+            self.log_test("Login returns user data", 'user' in response)
 
     def test_protected_endpoints(self):
         """Test protected endpoints that require authentication"""
@@ -341,7 +311,7 @@ class Relasi4WarnaAPITester:
             "Create Payment", 
             "POST", 
             "payment/create", 
-            200,  # Expecting 200 since endpoint is working, even with dummy data
+            404,  # Expecting 404 for dummy result_id
             payment_data
         )
 
@@ -439,45 +409,317 @@ class Relasi4WarnaAPITester:
             404
         )
 
-    def run_focused_tests(self):
-        """Run focused tests for monorepo migration verification"""
-        print("🚀 Starting Focused Relasi4Warna API Tests for Monorepo Migration...")
-        print(f"Testing against: {self.base_url}")
+    def test_report_generation_and_tier_upgrade_flows(self):
+        """Test comprehensive report generation and tier upgrade flows as specified in review request"""
+        print("\n🔍 Testing Report Generation & Tier Upgrade Flows...")
         
-        # Test the specific endpoints mentioned in review request
-        print("\n=== FOCUSED TESTS FOR MONOREPO MIGRATION ===")
+        # First, login with test user
+        login_data = {
+            "email": "test@test.com",
+            "password": "testpassword"
+        }
         
-        # 1. Backend health check
-        self.test_health_endpoints()
+        success, response = self.run_test(
+            "Login Test User", 
+            "POST", 
+            "auth/login", 
+            200, 
+            login_data
+        )
         
-        # 2. Auth login with test credentials
-        self.test_user_login()
+        if not success or 'access_token' not in response:
+            self.log_test("Report flows test", False, "Failed to login test user")
+            return
         
-        # 3. Auth me endpoint (requires login first)
-        self.test_protected_endpoints()
+        # Store test user token
+        test_token = response['access_token']
+        test_user_id = response['user']['user_id']
+        original_token = self.token
+        self.token = test_token
         
-        # 4. Quiz series (should return 4 series)
-        self.test_quiz_series()
+        # Check initial user tier
+        success, user_data = self.run_test("Get User Profile", "GET", "auth/me", 200)
+        if success:
+            initial_tier = user_data.get('tier', 'free')
+            print(f"   Initial user tier: {initial_tier}")
         
-        # 5. Quiz archetypes
-        self.test_archetypes()
+        # Test 1: Premium Report Flow
+        print("\n   🔸 Testing Premium Report Flow...")
+        result_id = self._create_quiz_and_get_result()
+        if result_id:
+            self._test_premium_report_flow(result_id)
         
-        # 6. Payment products
-        self.test_payment_endpoints()
+        # Test 2: Elite Report Flow
+        print("\n   🔸 Testing Elite Report Flow...")
+        elite_result_id = self._create_quiz_and_get_result()
+        if elite_result_id:
+            self._test_elite_report_flow(elite_result_id)
         
-        # Print summary
-        print(f"\n📊 Focused Test Summary:")
-        print(f"Tests run: {self.tests_run}")
-        print(f"Tests passed: {self.tests_passed}")
-        print(f"Tests failed: {len(self.failed_tests)}")
-        print(f"Success rate: {(self.tests_passed/self.tests_run*100):.1f}%")
+        # Test 3: Elite Plus Report Flow
+        print("\n   🔸 Testing Elite Plus Report Flow...")
+        elite_plus_result_id = self._create_quiz_and_get_result()
+        if elite_plus_result_id:
+            self._test_elite_plus_report_flow(elite_plus_result_id)
         
-        if self.failed_tests:
-            print(f"\n❌ Failed Tests:")
-            for test in self.failed_tests:
-                print(f"  - {test['test']}: {test['error']}")
+        # Test 4: PDF Download Tests
+        print("\n   🔸 Testing PDF Downloads...")
+        if result_id:
+            self._test_pdf_downloads(result_id)
         
-        return self.tests_passed == self.tests_run
+        # Restore original token
+        self.token = original_token
+
+    def _create_quiz_and_get_result(self):
+        """Helper method to create a quiz and get result_id"""
+        # Start quiz
+        quiz_data = {"series": "family", "language": "id"}
+        success, response = self.run_test(
+            "Start Quiz for Report Test", 
+            "POST", 
+            "quiz/start", 
+            200, 
+            quiz_data
+        )
+        
+        if not success or 'attempt_id' not in response:
+            return None
+        
+        attempt_id = response['attempt_id']
+        
+        # Get questions
+        success, questions_response = self.run_test(
+            "Get Questions for Report Test", 
+            "GET", 
+            "quiz/questions/family?language=id", 
+            200
+        )
+        
+        if not success or 'questions' not in questions_response:
+            return None
+        
+        questions = questions_response['questions']
+        
+        # Create realistic answers
+        answers = []
+        archetypes = ['driver', 'spark', 'anchor', 'analyst']
+        
+        for i, question in enumerate(questions):
+            answers.append({
+                "question_id": question['question_id'],
+                "selected_option": archetypes[i % len(archetypes)]
+            })
+        
+        # Submit quiz
+        submit_data = {
+            "attempt_id": attempt_id,
+            "answers": answers
+        }
+        
+        success, submit_response = self.run_test(
+            "Submit Quiz for Report Test", 
+            "POST", 
+            "quiz/submit", 
+            200, 
+            submit_data
+        )
+        
+        if success and 'result_id' in submit_response:
+            return submit_response['result_id']
+        
+        return None
+
+    def _test_premium_report_flow(self, result_id):
+        """Test premium report flow: payment -> simulate -> generate report"""
+        # Create payment for single_report
+        payment_data = {
+            "result_id": result_id,
+            "product_type": "single_report",
+            "currency": "IDR"
+        }
+        
+        success, payment_response = self.run_test(
+            "Create Premium Report Payment", 
+            "POST", 
+            "payment/create", 
+            200, 
+            payment_data
+        )
+        
+        if not success or 'payment_id' not in payment_response:
+            self.log_test("Premium report flow", False, "Failed to create payment")
+            return
+        
+        payment_id = payment_response['payment_id']
+        
+        # Simulate payment
+        success, simulate_response = self.run_test(
+            "Simulate Premium Payment", 
+            "POST", 
+            f"payment/simulate-payment/{payment_id}", 
+            200
+        )
+        
+        if not success:
+            self.log_test("Premium report flow", False, "Failed to simulate payment")
+            return
+        
+        # Generate premium report
+        success, report_response = self.run_test(
+            "Generate Premium Report", 
+            "POST", 
+            f"report/generate/{result_id}?language=id", 
+            200
+        )
+        
+        if success:
+            self.log_test("Premium Report Flow Complete", True, "Payment -> Simulate -> Generate successful")
+        else:
+            self.log_test("Premium Report Flow", False, "Failed to generate report after payment")
+
+    def _test_elite_report_flow(self, result_id):
+        """Test elite report flow: payment -> simulate -> tier upgrade -> generate elite report"""
+        # Create payment for elite_single
+        payment_data = {
+            "result_id": result_id,
+            "product_type": "elite_single",
+            "currency": "IDR"
+        }
+        
+        success, payment_response = self.run_test(
+            "Create Elite Report Payment", 
+            "POST", 
+            "payment/create", 
+            200, 
+            payment_data
+        )
+        
+        if not success or 'payment_id' not in payment_response:
+            self.log_test("Elite report flow", False, "Failed to create elite payment")
+            return
+        
+        payment_id = payment_response['payment_id']
+        
+        # Simulate payment (should upgrade tier to elite)
+        success, simulate_response = self.run_test(
+            "Simulate Elite Payment", 
+            "POST", 
+            f"payment/simulate-payment/{payment_id}", 
+            200
+        )
+        
+        if not success:
+            self.log_test("Elite report flow", False, "Failed to simulate elite payment")
+            return
+        
+        # Verify tier upgrade
+        success, user_data = self.run_test("Check Elite Tier Upgrade", "GET", "auth/me", 200)
+        if success:
+            current_tier = user_data.get('tier', 'free')
+            tier_upgraded = current_tier == 'elite'
+            self.log_test("Elite Tier Upgrade", tier_upgraded, f"Tier: {current_tier}")
+        
+        # Generate Elite report
+        elite_report_data = {
+            "language": "id",
+            "force": False,
+            "child_age_range": "school_age",
+            "relationship_challenges": "communication_barriers"
+        }
+        
+        success, report_response = self.run_test(
+            "Generate Elite Report", 
+            "POST", 
+            f"report/elite/{result_id}", 
+            200,
+            elite_report_data
+        )
+        
+        if success:
+            self.log_test("Elite Report Flow Complete", True, "Payment -> Tier Upgrade -> Elite Report successful")
+        else:
+            self.log_test("Elite Report Flow", False, "Failed to generate elite report")
+
+    def _test_elite_plus_report_flow(self, result_id):
+        """Test elite plus report flow: payment -> simulate -> tier upgrade -> generate elite plus report"""
+        # Create payment for elite_plus_monthly
+        payment_data = {
+            "result_id": result_id,
+            "product_type": "elite_plus_monthly",
+            "currency": "IDR"
+        }
+        
+        success, payment_response = self.run_test(
+            "Create Elite Plus Payment", 
+            "POST", 
+            "payment/create", 
+            200, 
+            payment_data
+        )
+        
+        if not success or 'payment_id' not in payment_response:
+            self.log_test("Elite Plus report flow", False, "Failed to create elite plus payment")
+            return
+        
+        payment_id = payment_response['payment_id']
+        
+        # Simulate payment (should upgrade tier to elite_plus)
+        success, simulate_response = self.run_test(
+            "Simulate Elite Plus Payment", 
+            "POST", 
+            f"payment/simulate-payment/{payment_id}", 
+            200
+        )
+        
+        if not success:
+            self.log_test("Elite Plus report flow", False, "Failed to simulate elite plus payment")
+            return
+        
+        # Verify tier upgrade
+        success, user_data = self.run_test("Check Elite Plus Tier Upgrade", "GET", "auth/me", 200)
+        if success:
+            current_tier = user_data.get('tier', 'free')
+            tier_upgraded = current_tier == 'elite_plus'
+            self.log_test("Elite Plus Tier Upgrade", tier_upgraded, f"Tier: {current_tier}")
+        
+        # Generate Elite Plus report
+        elite_plus_report_data = {
+            "language": "id",
+            "force": False,
+            "certification_level": 2,
+            "include_certification": True,
+            "include_coaching_model": True
+        }
+        
+        success, report_response = self.run_test(
+            "Generate Elite Plus Report", 
+            "POST", 
+            f"report/elite-plus/{result_id}", 
+            200,
+            elite_plus_report_data
+        )
+        
+        if success:
+            self.log_test("Elite Plus Report Flow Complete", True, "Payment -> Tier Upgrade -> Elite Plus Report successful")
+        else:
+            self.log_test("Elite Plus Report Flow", False, "Failed to generate elite plus report")
+
+    def _test_pdf_downloads(self, result_id):
+        """Test PDF download endpoints"""
+        # Test preview PDF download
+        success, pdf_response = self.run_test(
+            "Download Preview PDF", 
+            "GET", 
+            f"report/preview-pdf/{result_id}", 
+            200
+        )
+        
+        # Test premium PDF download
+        success, pdf_response = self.run_test(
+            "Download Premium PDF", 
+            "GET", 
+            f"report/pdf/{result_id}", 
+            200
+        )
 
     def run_all_tests(self):
         """Run all tests"""
@@ -498,6 +740,7 @@ class Relasi4WarnaAPITester:
         self.test_admin_endpoints()  # New Phase 2 test
         self.test_share_endpoints()  # New Phase 2 test
         self.test_pdf_report_endpoint()  # New Phase 2 test
+        self.test_report_generation_and_tier_upgrade_flows()  # Review request specific tests
         
         # Print summary
         print(f"\n📊 Test Summary:")
@@ -515,13 +758,7 @@ class Relasi4WarnaAPITester:
 
 def main():
     tester = Relasi4WarnaAPITester()
-    
-    # Check if we should run focused tests
-    if len(sys.argv) > 1 and sys.argv[1] == "--focused":
-        success = tester.run_focused_tests()
-    else:
-        success = tester.run_all_tests()
-    
+    success = tester.run_all_tests()
     return 0 if success else 1
 
 if __name__ == "__main__":

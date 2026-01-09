@@ -1,222 +1,153 @@
 # Relasi4Warna - Deployment Guide
 
-## Quick Start (VPS Deployment)
+## Quick Start (Docker Compose)
 
-### Prerequisites
-- VPS with Docker & Docker Compose installed
-- Domain pointing to VPS IP
-- MongoDB Atlas account (or self-hosted MongoDB)
-- Midtrans account for payments
-- Emergent Platform account for AI
-
-### Step 1: Clone Repository
 ```bash
-git clone https://github.com/your-username/relasi4warna.git
+# Clone repository
+git clone https://github.com/your-org/relasi4warna.git
 cd relasi4warna
-```
 
-### Step 2: Configure Environment
-```bash
+# Configure environment
 cp .env.example .env
-nano .env  # Edit with your values
-```
+# Edit .env with your production values
 
-**Required Environment Variables:**
-| Variable | Description |
-|----------|-------------|
-| `MONGO_URL` | MongoDB connection string |
-| `JWT_SECRET` | Random 32+ character string |
-| `EMERGENT_LLM_KEY` | From Emergent Platform |
-| `MIDTRANS_SERVER_KEY` | From Midtrans dashboard |
-| `MIDTRANS_CLIENT_KEY` | From Midtrans dashboard |
-| `REACT_APP_BACKEND_URL` | Your domain (e.g., https://yourdomain.com) |
-
-### Step 3: Build & Deploy
-```bash
-# Build images
-docker compose build
-
-# Start services
+# Deploy
 docker compose up -d
 
 # Check status
 docker compose ps
-
-# View logs
 docker compose logs -f
 ```
 
-### Step 4: Verify Deployment
-```bash
-# Check health
-curl http://localhost/health
-curl http://localhost/api/health
-
-# Should return: {"status":"healthy"}
-```
-
----
-
-## File Structure
+## Project Structure (Monorepo)
 
 ```
-/app
-├── Dockerfile                    # Multi-stage build (backend + frontend)
-├── docker-compose.yml            # Production compose file
-├── .env.example                  # Environment template
+relasi4warna/
+├── apps/
+│   ├── api/              # FastAPI backend
+│   │   ├── server.py
+│   │   ├── requirements.txt
+│   │   └── .env
+│   └── web/              # React frontend
+│       ├── src/
+│       ├── package.json
+│       └── .env
+├── packages/             # Shared packages
 ├── infra/
 │   └── docker/
-│       ├── Dockerfile.backend    # Standalone backend image
-│       ├── Dockerfile.frontend   # Standalone frontend image
-│       └── nginx.conf            # Nginx configuration
-├── .github/
-│   └── workflows/
-│       ├── ci.yml                # CI pipeline (tests + builds)
-│       └── deploy.yml            # Deploy to VPS workflow
-├── backend/                      # FastAPI application
-├── frontend/                     # React application
-└── packages/                     # Shared business logic
+│       ├── Dockerfile.backend
+│       ├── Dockerfile.frontend
+│       └── nginx.conf
+├── docker-compose.yml
+└── .env.example
 ```
 
----
+## Environment Variables
+
+### Backend (apps/api/.env)
+
+```env
+# Database
+MONGO_URL=mongodb://mongo:27017/relasi4warna
+DB_NAME=relasi4warna
+
+# Security
+JWT_SECRET=your_secure_jwt_secret_here
+
+# AI Integration
+EMERGENT_LLM_KEY=your_emergent_key
+
+# Payment (Midtrans Production)
+MIDTRANS_SERVER_KEY=Mid-server-xxxxx
+MIDTRANS_CLIENT_KEY=Mid-client-xxxxx
+MIDTRANS_MERCHANT_ID=Gxxxxxxx
+MIDTRANS_IS_PRODUCTION=true
+
+# Email (Optional)
+RESEND_API_KEY=re_xxxxx
+SENDER_EMAIL=noreply@yourdomain.com
+
+# Google OAuth (Optional)
+GOOGLE_CLIENT_ID=xxxxx.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-xxxxx
+```
+
+### Frontend (apps/web/.env)
+
+```env
+REACT_APP_BACKEND_URL=https://api.yourdomain.com
+```
 
 ## Deployment Options
 
-### Option 1: Single Dockerfile (Recommended)
-Uses multi-stage `Dockerfile` at root:
+### Option 1: Docker Compose (Recommended)
+
 ```bash
-docker compose up -d
+# Production deployment
+docker compose -f docker-compose.yml up -d
+
+# With SSL/TLS (using Traefik or nginx-proxy)
+docker compose -f docker-compose.yml -f docker-compose.ssl.yml up -d
 ```
 
-### Option 2: Separate Images
-Build each service separately:
-```bash
-# Backend
-docker build -f infra/docker/Dockerfile.backend -t relasi-backend .
+### Option 2: Manual Deployment
 
-# Frontend
-docker build -f infra/docker/Dockerfile.frontend -t relasi-frontend \
-  --build-arg REACT_APP_BACKEND_URL=https://yourdomain.com .
+**Backend:**
+```bash
+cd apps/api
+pip install -r requirements.txt
+uvicorn server:app --host 0.0.0.0 --port 8001 --workers 2
 ```
 
-### Option 3: GitHub Actions (CI/CD)
-1. Add secrets to GitHub repository
-2. Push to `main` branch triggers CI
-3. Use "Deploy to VPS" workflow for deployment
-
-**Required GitHub Secrets:**
-- `VPS_HOST` - VPS IP address
-- `VPS_USER` - SSH username
-- `VPS_SSH_KEY` - Private SSH key
-- `MONGO_URL`, `JWT_SECRET`, etc.
-
----
-
-## SSL/HTTPS Setup
-
-### Using Certbot (Let's Encrypt)
+**Frontend:**
 ```bash
-# Install certbot
-apt install certbot python3-certbot-nginx
-
-# Get certificate
-certbot --nginx -d yourdomain.com
-
-# Auto-renewal
-certbot renew --dry-run
+cd apps/web
+yarn install
+yarn build
+# Serve with nginx or similar
 ```
 
-### Manual SSL
-1. Place certificates in `./ssl/` folder:
-   - `fullchain.pem`
-   - `privkey.pem`
-2. Uncomment HTTPS block in `nginx.conf`
-3. Restart: `docker compose restart frontend`
+## Production Checklist
 
----
+- [ ] Set `MIDTRANS_IS_PRODUCTION=true`
+- [ ] Use production Midtrans keys
+- [ ] Configure HTTPS/SSL
+- [ ] Set secure JWT_SECRET
+- [ ] Configure proper CORS origins
+- [ ] Set up database backups
+- [ ] Configure monitoring/logging
+- [ ] Set up health checks
 
-## Maintenance
+## Midtrans Production Setup
 
-### View Logs
-```bash
-docker compose logs -f backend
-docker compose logs -f frontend
-```
+1. Login to [Midtrans Dashboard](https://dashboard.midtrans.com/)
+2. Go to Settings → Access Keys
+3. Copy Production Server Key and Client Key
+4. Configure webhook URL: `https://yourdomain.com/api/payment/webhook`
+5. Enable required payment methods
 
-### Restart Services
-```bash
-docker compose restart
-```
+## Health Checks
 
-### Update Application
-```bash
-git pull
-docker compose build --no-cache
-docker compose up -d
-```
-
-### Backup Database
-```bash
-# MongoDB Atlas: Use Atlas UI or mongodump
-mongodump --uri="$MONGO_URL" --out=./backup
-```
-
----
+- Backend: `GET /api/health`
+- Frontend: `GET /`
 
 ## Troubleshooting
 
 ### Backend not starting
 ```bash
 docker compose logs backend
-# Check for missing env variables
 ```
 
-### Frontend 502 error
+### Database connection issues
 ```bash
-# Check if backend is healthy
-curl http://localhost:8001/health
-
-# Restart services
-docker compose restart
+docker compose exec mongo mongosh --eval "db.stats()"
 ```
 
-### Database connection failed
-```bash
-# Verify MongoDB URL
-docker compose exec backend python -c "from pymongo import MongoClient; print(MongoClient('$MONGO_URL').server_info())"
-```
-
----
-
-## Performance Tuning
-
-### Nginx Workers
-Edit `nginx.conf`:
-```nginx
-worker_processes auto;
-worker_connections 1024;
-```
-
-### Backend Workers
-Edit `docker-compose.yml` CMD:
-```yaml
-CMD ["uvicorn", "server:app", "--workers", "4"]
-```
-
-### Memory Limits
-```yaml
-services:
-  backend:
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-```
-
----
+### Payment issues
+- Verify Midtrans keys are correct
+- Check webhook URL is accessible
+- Review Midtrans dashboard for transaction logs
 
 ## Support
 
-- Documentation: `/docs` endpoint
-- Health Check: `/health` and `/api/health`
-- Issues: GitHub Issues
+For issues, contact: support@relasi4warna.com

@@ -1,0 +1,25 @@
+{
+  "name": "relasi4warna-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"yarn dev:api\" \"yarn dev:web\"",
+    "dev:api": "cd apps/api && python -m uvicorn server:app --reload --host 0.0.0.0 --port 8001",
+    "dev:web": "cd apps/web && yarn start",
+    "build": "yarn build:web",
+    "build:web": "cd apps/web && yarn build",
+    "test": "yarn test:api && yarn test:web",
+    "test:api": "cd apps/api && pytest",
+    "test:web": "cd apps/web && yarn test",
+    "lint": "yarn lint:api && yarn lint:web",
+    "lint:api": "cd apps/api && ruff check .",
+    "lint:web": "cd apps/web && eslint src/"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  }
+}

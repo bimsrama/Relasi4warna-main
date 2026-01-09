@@ -1,25 +1,13 @@
-<<<<<<< Updated upstream
-=======
 # ===========================================
-# Relasi4Warna Backend Dockerfile (Standalone)
+# Relasi4Warna Backend Dockerfile (Monorepo)
 # ===========================================
 # Build: docker build -f infra/docker/Dockerfile.backend -t relasi-backend .
 # ===========================================
 
->>>>>>> Stashed changes
 FROM python:3.11-slim
 
 WORKDIR /app
 
-<<<<<<< Updated upstream
-# 1. Install Requirements
-COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 2. COPY LIBRARY LOKAL (Bagian Kritis)
-# Copy folder packages dari host ke /app/packages di container
-COPY packages/ /app/packages/
-=======
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
@@ -29,30 +17,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean
 
 # Copy and install Python dependencies first (for better caching)
-COPY backend/requirements.txt ./requirements.txt
+COPY apps/api/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
 # Copy packages (shared business logic)
 COPY packages/ ./packages/
->>>>>>> Stashed changes
 
-# 3. DEBUGGING (Cek apakah file benar-benar masuk)
-# Perintah ini akan menampilkan isi folder di log build GitHub Actions
-RUN echo "=== CEK ISI FOLDER PACKAGES ===" && ls -R /app/packages
+# Copy backend code from monorepo location
+COPY apps/api/ ./api/
 
-<<<<<<< Updated upstream
-# 4. Copy Backend
-COPY backend/ /app/backend/
-
-# 5. Set PYTHONPATH
-# Kita tambahkan /app/packages agar Python bisa menemukan 'emergentintegrations'
-ENV PYTHONPATH=/app/packages:/app:/app/backend
-
-# 6. Jalankan
-WORKDIR /app/backend
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001"]
-=======
 # Set Python path to include packages
 ENV PYTHONPATH=/app:/app/packages
 ENV PYTHONUNBUFFERED=1
@@ -63,14 +37,13 @@ USER appuser
 
 # Health check endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8001/health || exit 1
+    CMD curl -f http://localhost:8001/api/health || exit 1
 
 # Expose port
 EXPOSE 8001
 
-# Set working directory to backend
-WORKDIR /app/backend
+# Set working directory to api
+WORKDIR /app/api
 
 # Run with uvicorn (production settings)
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "2", "--loop", "uvloop", "--http", "httptools"]
->>>>>>> Stashed changes

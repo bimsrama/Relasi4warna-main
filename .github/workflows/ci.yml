@@ -1,6 +1,3 @@
-<<<<<<< Updated upstream
-name: Fullstack Build & Push
-=======
 # ===========================================
 # Relasi4Warna - CI/CD Pipeline
 # ===========================================
@@ -10,61 +7,26 @@ name: Fullstack Build & Push
 # ===========================================
 
 name: CI/CD Pipeline
->>>>>>> Stashed changes
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-<<<<<<< Updated upstream
-  build-push:
-=======
   # ===========================================
   # Job 1: Backend Tests
   # ===========================================
   test-backend:
     name: Backend Tests
->>>>>>> Stashed changes
     runs-on: ubuntu-latest
+    
     steps:
-<<<<<<< Updated upstream
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Login ke Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      # 1. BUILD & PUSH BACKEND
-      - name: Build Backend
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: infra/docker/Dockerfile.backend
-          push: true
-          tags: bimsrama/relasi4warna:backend
-
-      # 2. BUILD & PUSH FRONTEND
-      - name: Build Frontend
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: infra/docker/Dockerfile.frontend
-          push: true
-          tags: bimsrama/relasi4warna:frontend
-          # --- PERUBAHAN ADA DI SINI ---
-          # Hapus :8001 agar frontend menembak ke Nginx (Port 80)
-          # Nginx yang akan meneruskan ke backend secara internal
-          build-args: |
-            REACT_APP_BACKEND_URL=http://relasi4warna.com
-=======
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -243,4 +205,3 @@ jobs:
             REACT_APP_BACKEND_URL=${{ secrets.REACT_APP_BACKEND_URL }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
->>>>>>> Stashed changes
