@@ -182,8 +182,9 @@ const ProtectedRoute = ({ children }) => {
 function AppRouter() {
   const location = useLocation();
   
-  // Handle OAuth callback
-  if (location.hash?.includes('session_id=')) {
+  // Handle OAuth callback (UPDATED FOR GOOGLE LOGIN)
+  // Sekarang mengecek 'access_token' (baru) ATAU 'session_id' (lama)
+  if (location.hash?.includes('session_id=') || location.hash?.includes('access_token=')) {
     return <AuthCallback />;
   }
 
