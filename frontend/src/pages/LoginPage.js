@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { useLanguage, useAuth } from "../App";
+import { useLanguage, useAuth, API } from "../App"; // Import API dari App.js
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Input } from "../components/ui/input";
@@ -30,9 +30,10 @@ const LoginPage = () => {
   };
 
   const handleGoogleLogin = () => {
-    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-    const redirectUrl = window.location.origin + '/dashboard';
-    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+    // --- PERBAIKAN: Menggunakan Backend Sendiri ---
+    // Jangan redirect ke auth.emergentagent.com lagi.
+    // Redirect ke endpoint backend kita yang akan mengurus ke Google.
+    window.location.href = `${API}/auth/google/login`;
   };
 
   return (
