@@ -10,7 +10,7 @@ env:
 
 jobs:
   # ===========================================
-  # Job 1: Backend Tests
+  # Job 1: Backend Verification (Full Install)
   # ===========================================
   test-backend:
     name: Backend Verification
@@ -23,21 +23,24 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          # Cache dimatikan dulu biar aman
-          # cache: 'pip' 
+          # CACHE DIMATIKAN (Sapu Bersih)
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
           cd backend
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Verify imports
+      - name: Verify Imports
         run: |
+          # Paksa Python membaca folder packages di root
           export PYTHONPATH=$PYTHONPATH:$(pwd)/packages
+          
           cd backend
+          # Cek apakah server bisa start tanpa error import
           python -c "from server import app; print('✓ Server imports OK')"
         env:
+          # Dummy env vars agar tidak error
           MONGO_URL: mongodb://localhost:27017/test
           DB_NAME: test
           JWT_SECRET: dummy
@@ -46,12 +49,11 @@ jobs:
           MIDTRANS_CLIENT_KEY: dummy
 
   # ===========================================
-  # Job 2: Frontend Build Check
+  # Job 2: Frontend Verification (Full Install)
   # ===========================================
   test-frontend:
     name: Frontend Verification
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -60,27 +62,27 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          # --- PERBAIKAN: HAPUS CACHE ---
-          # Kita hapus cache: 'npm' karena package-lock.json tidak ada
-          # Ini akan mencegah error "file not found"
+          # CACHE DIMATIKAN (Sapu Bersih)
 
-      - name: Install dependencies
+      - name: Install & Build
         run: |
-          # Masuk ke folder frontend
           cd frontend
+          # Hapus node_modules lama jika ada (biar yakin bersih)
+          rm -rf node_modules
+          rm -f package-lock.json
+          
+          # Install fresh
           npm install --legacy-peer-deps
           npm install ajv@8 --save-dev --legacy-peer-deps
-
-      - name: Build Test
-        run: |
-          cd frontend
+          
+          # Coba Build
           npm run build
         env:
           REACT_APP_BACKEND_URL: http://relasi4warna.com
           CI: false
 
   # ===========================================
-  # Job 3: Build & Push Docker Images
+  # Job 3: Build & Push Docker (Final)
   # ===========================================
   build-push:
     name: Build & Push Docker
