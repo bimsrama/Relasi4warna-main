@@ -40,10 +40,13 @@ jobs:
           # Cek apakah server bisa start tanpa error import
           python -c "from server import app; print('✓ Server imports OK')"
         env:
-          # Dummy env vars agar tidak error
+          # Dummy env vars agar tidak error saat inisialisasi
           MONGO_URL: mongodb://localhost:27017/test
           DB_NAME: test
           JWT_SECRET: dummy
+          # Tambahkan OpenAI Key Dummy
+          OPENAI_API_KEY: dummy
+          # Emergent key bisa dihapus jika sudah tidak dipakai, atau biarkan saja
           EMERGENT_LLM_KEY: dummy
           MIDTRANS_SERVER_KEY: dummy
           MIDTRANS_CLIENT_KEY: dummy
@@ -78,7 +81,8 @@ jobs:
           # Coba Build
           npm run build
         env:
-          REACT_APP_BACKEND_URL: http://relasi4warna.com
+          # Update ke HTTPS untuk test build
+          REACT_APP_BACKEND_URL: https://relasi4warna.com
           CI: false
 
   # ===========================================
@@ -117,4 +121,5 @@ jobs:
           push: true
           tags: bimsrama/relasi4warna:frontend
           build-args: |
-            REACT_APP_BACKEND_URL=http://relasi4warna.com
+            # PENTING: Gunakan HTTPS agar sesuai dengan SSL Traefik
+            REACT_APP_BACKEND_URL=https://relasi4warna.com
